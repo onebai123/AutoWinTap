@@ -2,11 +2,11 @@
 
 # 🖥️ AutoWinTap
 
-**AI-Powered Window Automation Platform**
+**AI-Powered Windows Automation Platform**
 
-**AI 驱动的窗口自动化平台 - 你的智能编程监管者**
+**AI 驱动的 Windows 窗口自动化平台 - 你的智能编程监管者**
 
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows-lightgrey.svg)]()
 [![.NET](https://img.shields.io/badge/.NET-8.0-purple.svg)]()
 [![Next.js](https://img.shields.io/badge/Next.js-15-black.svg)]()
@@ -216,7 +216,7 @@ autowintap/
 
 ### 📄 开源协议
 
-本项目采用 [MIT License](LICENSE) 开源协议。
+本项目采用 [GPL-3.0 License](LICENSE) 开源协议。
 
 ### 🙏 致谢
 
@@ -260,7 +260,7 @@ cd agent && dotnet run --project WinTabAgent
 
 ### 📄 License
 
-MIT License - see [LICENSE](LICENSE) for details.
+GPL-3.0 License - see [LICENSE](LICENSE) for details.
 
 ---
 
