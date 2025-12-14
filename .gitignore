@@ -1,0 +1,39 @@
+# Dependencies
+node_modules/
+server/node_modules/
+
+# Build outputs
+server/.next/
+bin/
+obj/
+*.dll
+*.exe
+*.pdb
+
+# IDE
+.vs/
+.vscode/
+*.suo
+*.user
+
+# Logs
+*.log
+npm-debug.log*
+
+# Database
+*.db
+*.db-journal
+
+# Environment
+.env
+.env.local
+.env*.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project specs (private)
+.kiro/
+
+*.zip

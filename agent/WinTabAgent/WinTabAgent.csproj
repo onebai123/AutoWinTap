@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <RootNamespace>WinTabAgent</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\WinTabAgent.Plugins.Abstractions\WinTabAgent.Plugins.Abstractions.csproj" />
+    <ProjectReference Include="..\WinTabAgent.Plugins.WindowControl\WinTabAgent.Plugins.WindowControl.csproj" />
+    <ProjectReference Include="..\WinTabAgent.Plugins.BrowserDebug\WinTabAgent.Plugins.BrowserDebug.csproj" />
+    <ProjectReference Include="..\WinTabAgent.Plugins.Windsurf\WinTabAgent.Plugins.Windsurf.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.Text.Json" Version="8.0.0" />
+  </ItemGroup>
+
+</Project>

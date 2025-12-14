@@ -1,0 +1,85 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+// 设备
+model Device {
+  id           String   @id @default(uuid())
+  machineId    String   @unique
+  hostname     String
+  ip           String?
+  os           String
+  agentVersion String
+  status       String   @default("OFFLINE") // ONLINE | OFFLINE
+  plugins      String   @default("[]") // JSON array of plugin IDs
+  lastSeen     DateTime @default(now())
+  createdAt    DateTime @default(now())
+
+  presets Preset[]
+  tasks   Task[]
+}
+
+// 窗口组合
+model Preset {
+  id        String   @id @default(uuid())
+  name      String
+  hotkey    String?
+  windows   String   @default("[]") // JSON array of window patterns
+  deviceId  String
+  device    Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+}
+
+// 任务
+model Task {
+  id        String     @id @default(uuid())
+  name      String
+  type      String     // WINDOW | BROWSER | IDE | CUSTOM
+  plugin    String
+  action    String
+  params    String     @default("{}") // JSON
+  status    String     @default("PENDING") // PENDING | RUNNING | SUCCESS | FAILED
+  result    String?    // JSON
+  deviceId  String
+  device    Device     @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  createdAt DateTime   @default(now())
+}
+
+// 插件
+model Plugin {
+  id          String  @id
+  name        String
+  version     String
+  description String
+  author      String
+  category    String
+  downloads   Int     @default(0)
+  isBuiltin   Boolean @default(false)
+}
+
+// 系统设置
+model SystemSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @default(now()) @updatedAt
+}
+
+// 工作台
+model Workstation {
+  id        String   @id @default(uuid())
+  name      String
+  deviceId  String
+  windows   String   @default("[]") // JSON string: WindowConfig[]
+  commands  String   @default("[]") // JSON string: CommandConfig[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// Status: ONLINE | OFFLINE
+// TaskType: WINDOW | BROWSER | IDE | CUSTOM
+// TaskStatus: PENDING | RUNNING | SUCCESS | FAILED
