@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 
-const AGENT_HTTP_PORT = 5100
+const AGENT_HTTP_PORT = 5200
 
 // POST /api/tasks/batch - 批量执行任务
 export async function POST(request: NextRequest) {

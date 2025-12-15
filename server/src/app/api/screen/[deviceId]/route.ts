@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 
-const AGENT_HTTP_PORT = 5100
+const AGENT_HTTP_PORT = 5200
 
 // 屏幕帧缓存
 const screenFrames = new Map<string, {

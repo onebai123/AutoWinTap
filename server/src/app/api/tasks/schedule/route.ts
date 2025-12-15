@@ -89,7 +89,7 @@ export async function POST(request: NextRequest) {
         if (!device || device.status !== 'ONLINE') return
 
         // 执行任务
-        const agentUrl = `http://localhost:5100/execute`
+        const agentUrl = `http://localhost:5200/execute`
         const res = await fetch(agentUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

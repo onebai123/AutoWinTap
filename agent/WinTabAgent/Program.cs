@@ -4,6 +4,7 @@ using WinTabAgent.Services;
 using WinTabAgent.Plugins.WindowControl;
 using WinTabAgent.Plugins.BrowserDebug;
 using WinTabAgent.Plugins.Windsurf;
+using WinTabAgent.Plugins.Shell;
 
 namespace WinTabAgent;
 
@@ -36,6 +37,7 @@ class Program
         await pluginService.RegisterBuiltinPluginAsync(new WindowControlPlugin());
         await pluginService.RegisterBuiltinPluginAsync(new BrowserDebugPlugin());
         await pluginService.RegisterBuiltinPluginAsync(new WindsurfPlugin());
+        await pluginService.RegisterBuiltinPluginAsync(new ShellPlugin());
 
         // 加载外部插件
         await pluginService.LoadPluginsAsync();

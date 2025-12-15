@@ -140,13 +140,16 @@ public class WindowControlPlugin : IWindowPlugin
             "tile-windows" => await ExecuteTileWindowsAsync(parameters),
             "ocr" => await ExecuteOcrAsync(parameters),
             "ocr-screen" => await ExecuteOcrScreenAsync(),
+            "list-ports" => await ExecuteListPortsAsync(),
+            "kill-by-port" => ExecuteKillByPort(parameters),
+            "open-url" => ExecuteOpenUrl(parameters),
             _ => PluginResult.Fail($"Unknown action: {action}")
         };
     }
 
     public IEnumerable<string> GetSupportedActions()
     {
-        return new[] { "list", "list-processes", "activate", "minimize", "maximize", "capture", "capture-screen", "send-keys", "mouse-click", "switch-preset", "switch-desktop", "minimize-all", "restore-all", "tile-windows", "ocr", "ocr-screen" };
+        return new[] { "list", "list-processes", "activate", "minimize", "maximize", "capture", "capture-screen", "send-keys", "mouse-click", "switch-preset", "switch-desktop", "minimize-all", "restore-all", "tile-windows", "ocr", "ocr-screen", "list-ports", "kill-by-port", "open-url" };
     }
 
     #endregion
@@ -666,6 +669,215 @@ public class WindowControlPlugin : IWindowPlugin
         
         var result = await ocrEngine.RecognizeAsync(softwareBitmap);
         return result.Text;
+    }
+
+    #endregion
+
+    #region Port Management
+
+    /// <summary>
+    /// 获取所有监听端口列表
+    /// </summary>
+    private async Task<PluginResult> ExecuteListPortsAsync()
+    {
+        try
+        {
+            var ports = new List<object>();
+            
+            // 使用 netstat 获取端口信息
+            var psi = new ProcessStartInfo
+            {
+                FileName = "netstat",
+                Arguments = "-ano",
+                RedirectStandardOutput = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+            using var process = Process.Start(psi);
+            if (process == null)
+            {
+                return PluginResult.Fail("Failed to start netstat");
+            }
+
+            var output = await process.StandardOutput.ReadToEndAsync();
+            await process.WaitForExitAsync();
+
+            var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+            var processCache = new Dictionary<int, string>();
+
+            foreach (var line in lines)
+            {
+                // 解析 TCP/UDP 行
+                var parts = line.Trim().Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length < 4) continue;
+                
+                var protocol = parts[0].ToUpper();
+                if (protocol != "TCP" && protocol != "UDP") continue;
+
+                var localAddress = parts[1];
+                var state = protocol == "TCP" && parts.Length >= 4 ? parts[3] : "N/A";
+                var pidStr = parts[^1]; // 最后一列是 PID
+
+                if (!int.TryParse(pidStr, out var pid)) continue;
+
+                // 解析端口
+                var colonIndex = localAddress.LastIndexOf(':');
+                if (colonIndex == -1) continue;
+                
+                var portStr = localAddress[(colonIndex + 1)..];
+                if (!int.TryParse(portStr, out var port)) continue;
+
+                var address = localAddress[..colonIndex];
+
+                // 获取进程名（缓存）
+                if (!processCache.TryGetValue(pid, out var processName))
+                {
+                    try
+                    {
+                        var proc = Process.GetProcessById(pid);
+                        processName = proc.ProcessName;
+                    }
+                    catch
+                    {
+                        processName = "Unknown";
+                    }
+                    processCache[pid] = processName;
+                }
+
+                ports.Add(new
+                {
+                    port,
+                    protocol,
+                    localAddress = address,
+                    state,
+                    processId = pid,
+                    processName
+                });
+            }
+
+            // 按端口排序，去重
+            var uniquePorts = ports
+                .GroupBy(p => ((dynamic)p).port + "_" + ((dynamic)p).protocol)
+                .Select(g => g.First())
+                .OrderBy(p => ((dynamic)p).port)
+                .ToList();
+
+            return PluginResult.Ok(uniquePorts);
+        }
+        catch (Exception ex)
+        {
+            return PluginResult.Fail($"Failed to list ports: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// 杀死占用指定端口的进程
+    /// </summary>
+    private PluginResult ExecuteKillByPort(JsonElement parameters)
+    {
+        if (!parameters.TryGetProperty("port", out var portProp))
+        {
+            return PluginResult.Fail("Missing 'port' parameter");
+        }
+
+        var port = portProp.GetInt32();
+
+        try
+        {
+            // 使用 netstat 找到占用端口的 PID
+            var psi = new ProcessStartInfo
+            {
+                FileName = "cmd.exe",
+                Arguments = $"/c netstat -ano | findstr :{port}",
+                RedirectStandardOutput = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+            using var process = Process.Start(psi);
+            if (process == null)
+            {
+                return PluginResult.Fail("Failed to start netstat");
+            }
+
+            var output = process.StandardOutput.ReadToEnd();
+            process.WaitForExit();
+
+            var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+            var killedPids = new List<int>();
+
+            foreach (var line in lines)
+            {
+                var parts = line.Trim().Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length < 2) continue;
+
+                // 检查是否是目标端口（本地地址列）
+                var localAddr = parts[1];
+                if (!localAddr.EndsWith($":{port}")) continue;
+
+                var pidStr = parts[^1];
+                if (!int.TryParse(pidStr, out var pid) || pid == 0) continue;
+
+                try
+                {
+                    var proc = Process.GetProcessById(pid);
+                    var procName = proc.ProcessName;
+                    proc.Kill();
+                    killedPids.Add(pid);
+                    _context?.Log($"Killed process {procName} (PID: {pid}) on port {port}");
+                }
+                catch (Exception ex)
+                {
+                    _context?.Log($"Failed to kill PID {pid}: {ex.Message}", LogLevel.Warning);
+                }
+            }
+
+            if (killedPids.Count == 0)
+            {
+                return PluginResult.Fail($"No process found on port {port}");
+            }
+
+            return PluginResult.Ok(new { port, killedPids, message = $"Killed {killedPids.Count} process(es)" });
+        }
+        catch (Exception ex)
+        {
+            return PluginResult.Fail($"Failed to kill process: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// 在浏览器中打开 URL
+    /// </summary>
+    private PluginResult ExecuteOpenUrl(JsonElement parameters)
+    {
+        if (!parameters.TryGetProperty("url", out var urlProp))
+        {
+            return PluginResult.Fail("Missing 'url' parameter");
+        }
+
+        var url = urlProp.GetString();
+        if (string.IsNullOrEmpty(url))
+        {
+            return PluginResult.Fail("Empty URL");
+        }
+
+        // 如果只是 ip:port 格式，自动加上 http://
+        if (!url.StartsWith("http://") && !url.StartsWith("https://"))
+        {
+            url = "http://" + url;
+        }
+
+        try
+        {
+            Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+            _context?.Log($"Opened URL: {url}");
+            return PluginResult.Ok(new { url, opened = true });
+        }
+        catch (Exception ex)
+        {
+            return PluginResult.Fail($"Failed to open URL: {ex.Message}");
+        }
     }
 
     #endregion

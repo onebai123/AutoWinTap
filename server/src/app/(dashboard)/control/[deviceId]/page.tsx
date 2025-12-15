@@ -37,6 +37,11 @@ import {
   RobotOutlined,
   SendOutlined,
   SettingOutlined,
+  ApiOutlined,
+  DeleteOutlined,
+  LinkOutlined,
+  CodeOutlined,
+  DesktopOutlined,
 } from '@ant-design/icons'
 import Link from 'next/link'
 import type { Device } from '@/types'
@@ -67,6 +72,17 @@ const pluginActions: Record<string, PluginAction[]> = {
     { name: 'capture', description: '窗口截图', params: [{ name: 'handle', type: 'number', required: true }] },
     { name: 'send-keys', description: '发送按键', params: [{ name: 'keys', type: 'string', required: true }] },
     { name: 'mouse-click', description: '鼠标点击', params: [{ name: 'x', type: 'number', required: true }, { name: 'y', type: 'number', required: true }] },
+    { name: 'list-ports', description: '端口列表' },
+    { name: 'kill-by-port', description: '杀死端口进程', params: [{ name: 'port', type: 'number', required: true }] },
+    { name: 'open-url', description: '打开URL', params: [{ name: 'url', type: 'string', required: true }] },
+  ],
+  'shell': [
+    { name: 'execute', description: '执行命令', params: [
+      { name: 'command', type: 'string', required: true },
+      { name: 'shell', type: 'string', required: false },
+      { name: 'cwd', type: 'string', required: false },
+      { name: 'timeout', type: 'number', required: false },
+    ]},
   ],
   'browser-debug': [
     { name: 'get-pages', description: 'Chrome页面列表' },
@@ -110,6 +126,13 @@ export default function ControlPanelPage() {
   const [windowList, setWindowList] = useState<{ handle: number; title: string; processName: string }[]>([])
   const [selectedWindow, setSelectedWindow] = useState<number | null>(null)
   const [captureMode, setCaptureMode] = useState<'screen' | 'window'>('screen')
+  
+  // Shell 状态
+  const [shellCommand, setShellCommand] = useState('')
+  const [shellType, setShellType] = useState<'cmd' | 'powershell'>('cmd')
+  const [shellCwd, setShellCwd] = useState('')
+  const [shellOutput, setShellOutput] = useState('')
+  const [shellLoading, setShellLoading] = useState(false)
 
   const addLog = useCallback((level: LogEntry['level'], msg: string) => {
     const time = new Date().toLocaleTimeString('zh-CN')
@@ -593,6 +616,140 @@ export default function ControlPanelPage() {
                 >
                   鼠标点击
                 </Button>
+                <Button
+                  icon={<ApiOutlined />}
+                  onClick={() => executeAction('window-control', 'list-ports')}
+                  disabled={device.status !== 'ONLINE' || executing}
+                >
+                  端口列表
+                </Button>
+              </Space>
+            </Card>
+          </Col>
+
+          {/* 远程 Shell */}
+          <Col span={24}>
+            <Card title="💻 远程 Shell" size="small">
+              <Space direction="vertical" style={{ width: '100%' }}>
+                <Space>
+                  <Radio.Group value={shellType} onChange={e => setShellType(e.target.value)} size="small">
+                    <Radio.Button value="cmd">CMD</Radio.Button>
+                    <Radio.Button value="powershell">PowerShell</Radio.Button>
+                  </Radio.Group>
+                  <Input 
+                    placeholder="工作目录 (可选)" 
+                    value={shellCwd}
+                    onChange={e => setShellCwd(e.target.value)}
+                    style={{ width: 200 }}
+                    size="small"
+                    prefix={<DesktopOutlined />}
+                  />
+                </Space>
+                <Space.Compact style={{ width: '100%' }}>
+                  <Input
+                    placeholder="输入命令..."
+                    value={shellCommand}
+                    onChange={e => setShellCommand(e.target.value)}
+                    onPressEnter={async () => {
+                      if (!shellCommand.trim()) return
+                      setShellLoading(true)
+                      setShellOutput('')
+                      try {
+                        const res = await fetch(`/api/agents/${deviceId}/execute`, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ 
+                            plugin: 'shell', 
+                            action: 'execute', 
+                            params: { 
+                              command: shellCommand,
+                              shell: shellType,
+                              cwd: shellCwd || undefined,
+                              timeout: 30000
+                            } 
+                          })
+                        })
+                        const data = await res.json()
+                        if (data.success && data.data?.data) {
+                          const result = data.data.data
+                          setShellOutput(result.output || result.error || '(无输出)')
+                          addLog(result.success ? 'success' : 'error', 
+                            `命令执行${result.success ? '成功' : '失败'} (${result.durationMs}ms)`)
+                        } else {
+                          setShellOutput(data.error || '执行失败')
+                          addLog('error', data.error || '命令执行失败')
+                        }
+                      } catch {
+                        setShellOutput('请求失败')
+                        addLog('error', '命令执行请求失败')
+                      } finally {
+                        setShellLoading(false)
+                      }
+                    }}
+                    disabled={device.status !== 'ONLINE' || shellLoading}
+                    prefix={<CodeOutlined />}
+                  />
+                  <Button 
+                    type="primary" 
+                    icon={<SendOutlined />} 
+                    loading={shellLoading}
+                    onClick={async () => {
+                      if (!shellCommand.trim()) return
+                      setShellLoading(true)
+                      setShellOutput('')
+                      try {
+                        const res = await fetch(`/api/agents/${deviceId}/execute`, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ 
+                            plugin: 'shell', 
+                            action: 'execute', 
+                            params: { 
+                              command: shellCommand,
+                              shell: shellType,
+                              cwd: shellCwd || undefined,
+                              timeout: 30000
+                            } 
+                          })
+                        })
+                        const data = await res.json()
+                        if (data.success && data.data?.data) {
+                          const result = data.data.data
+                          setShellOutput(result.output || result.error || '(无输出)')
+                          addLog(result.success ? 'success' : 'error', 
+                            `命令执行${result.success ? '成功' : '失败'} (${result.durationMs}ms)`)
+                        } else {
+                          setShellOutput(data.error || '执行失败')
+                          addLog('error', data.error || '命令执行失败')
+                        }
+                      } catch {
+                        setShellOutput('请求失败')
+                        addLog('error', '命令执行请求失败')
+                      } finally {
+                        setShellLoading(false)
+                      }
+                    }}
+                    disabled={device.status !== 'ONLINE' || !shellCommand.trim()}
+                  >
+                    执行
+                  </Button>
+                </Space.Compact>
+                {shellOutput && (
+                  <pre style={{ 
+                    background: '#1e1e1e', 
+                    color: '#d4d4d4', 
+                    padding: 12, 
+                    borderRadius: 4, 
+                    fontSize: 12,
+                    maxHeight: 200,
+                    overflow: 'auto',
+                    margin: 0,
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-all'
+                  }}>
+                    {shellOutput}
+                  </pre>
+                )}
               </Space>
             </Card>
           </Col>

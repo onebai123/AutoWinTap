@@ -34,11 +34,11 @@ start "WinTab Agent" cmd /k "cd /d %~dp0agent && dotnet run --project WinTabAgen
 
 echo.
 echo ═══════════════════════════════════════
-echo   ✓ Server: http://localhost:3000
+echo   ✓ Server: http://localhost:3001
 echo   ✓ Agent:  已启动
 echo ═══════════════════════════════════════
 echo.
 echo 按任意键打开控制台...
 pause >nul
 
-start http://localhost:3000
+start http://localhost:3001

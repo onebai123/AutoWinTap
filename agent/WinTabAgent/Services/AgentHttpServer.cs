@@ -63,7 +63,7 @@ public class AgentHttpServer : IDisposable
         catch (HttpListenerException ex)
         {
             _context.Log($"Failed to start HTTP server: {ex.Message}", LogLevel.Error);
-            _context.Log("Try running as Administrator or use: netsh http add urlacl url=http://+:5100/ user=Everyone", LogLevel.Warning);
+            _context.Log($"Try running as Administrator or use: netsh http add urlacl url=http://+:{_port}/ user=Everyone", LogLevel.Warning);
         }
     }
 

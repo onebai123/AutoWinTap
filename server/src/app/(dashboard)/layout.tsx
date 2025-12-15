@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { Layout, Menu, Typography, theme, Space, Button, Segmented, Tooltip, Divider, Modal, Tabs, Steps, Alert, Tag } from 'antd'
+import { Layout, Menu, Typography, theme, Space, Button, Segmented, Tooltip, Divider, Modal, Tabs, Steps, Alert, Tag, Dropdown } from 'antd'
 import {
   DashboardOutlined,
   DesktopOutlined,
@@ -18,10 +18,13 @@ import {
   PlayCircleOutlined,
   QuestionCircleOutlined,
   BulbOutlined,
+  DownOutlined,
+  InfoCircleOutlined,
 } from '@ant-design/icons'
 import { usePathname, useRouter } from 'next/navigation'
 import type { MenuProps } from 'antd'
 import Link from 'next/link'
+import { AI_LEVELS, DEFAULT_LEVEL, DISABLED_LEVELS, type AILevelId } from '@/lib/ai-level'
 
 const { Header, Sider, Content } = Layout
 const { Title, Text, Paragraph } = Typography
@@ -59,6 +62,8 @@ export default function DashboardLayout({
 }) {
   const [collapsed, setCollapsed] = useState(false)
   const [quickStartOpen, setQuickStartOpen] = useState(false)
+  const [aiLevel, setAiLevel] = useState<AILevelId>(DEFAULT_LEVEL as AILevelId)
+  const [aiLevelModalOpen, setAiLevelModalOpen] = useState(false)
   const pathname = usePathname()
   const router = useRouter()
   const { token } = theme.useToken()
@@ -242,8 +247,42 @@ export default function DashboardLayout({
             </Text>
           </Space>
 
-          {/* 右侧：模式切换 + 设置 + 快速开始 */}
+          {/* 右侧：AI级别 + 模式切换 + 设置 + 快速开始 */}
           <Space size="middle">
+            {/* AI 辅助级别选择器 */}
+            <Dropdown
+              menu={{
+                items: [
+                  ...Object.values(AI_LEVELS).map(level => ({
+                    key: level.id,
+                    disabled: DISABLED_LEVELS.includes(level.id),
+                    label: (
+                      <Space>
+                        <span>{level.icon}</span>
+                        <span style={{ opacity: DISABLED_LEVELS.includes(level.id) ? 0.5 : 1 }}>
+                          {level.id} {level.name}
+                          {DISABLED_LEVELS.includes(level.id) && <Tag style={{ marginLeft: 4 }}>即将推出</Tag>}
+                        </span>
+                        {level.id === aiLevel && <CheckCircleOutlined style={{ color: token.colorPrimary }} />}
+                      </Space>
+                    ),
+                    onClick: () => !DISABLED_LEVELS.includes(level.id) && setAiLevel(level.id as AILevelId),
+                  })),
+                  { type: 'divider' as const },
+                  {
+                    key: 'info',
+                    label: <><InfoCircleOutlined /> 了解各级别详情</>,
+                    onClick: () => setAiLevelModalOpen(true),
+                  },
+                ],
+              }}
+              trigger={['click']}
+            >
+              <Button size="small" style={{ background: AI_LEVELS[aiLevel].color, color: '#fff', border: 'none' }}>
+                {AI_LEVELS[aiLevel].icon} {aiLevel} <DownOutlined />
+              </Button>
+            </Dropdown>
+            <Divider type="vertical" />
             <Segmented
               size="small"
               options={[
@@ -305,6 +344,68 @@ export default function DashboardLayout({
         width={640}
       >
         <Tabs items={quickStartTabs} />
+      </Modal>
+
+      {/* AI 辅助级别说明弹窗 */}
+      <Modal
+        title={<><RobotOutlined /> AI 辅助级别 - 开发中</>}
+        open={aiLevelModalOpen}
+        onCancel={() => setAiLevelModalOpen(false)}
+        footer={<Button type="primary" onClick={() => setAiLevelModalOpen(false)}>我知道了</Button>}
+        width={700}
+      >
+        <Alert 
+          message="🚧 功能开发中" 
+          description="AI 辅助级别功能正在开发中，当前仅展示设计理念。后续版本将实现完整的分级控制能力。"
+          type="warning" 
+          showIcon 
+          style={{ marginBottom: 16 }}
+        />
+        
+        <Paragraph>
+          <Text strong>设计理念：</Text>参考自动驾驶 L1-L5 分级体系，让用户根据场景选择 AI 的自动化程度，在效率与可控性之间取得平衡。
+        </Paragraph>
+
+        <Space direction="vertical" style={{ width: '100%' }} size="middle">
+          {Object.values(AI_LEVELS).map(level => (
+            <Alert
+              key={level.id}
+              message={
+                <Space>
+                  <span style={{ fontSize: 18 }}>{level.icon}</span>
+                  <Tag color={level.color}>{level.id}</Tag>
+                  <Text strong>{level.name}</Text>
+                  {level.id === aiLevel && <Tag color="blue">当前</Tag>}
+                  {DISABLED_LEVELS.includes(level.id) && <Tag color="purple">即将推出</Tag>}
+                </Space>
+              }
+              description={
+                <div>
+                  <Paragraph style={{ marginBottom: 8 }}>{level.description}</Paragraph>
+                  <Space wrap>
+                    {level.capabilities.map((cap, i) => (
+                      <Tag key={i}>{cap}</Tag>
+                    ))}
+                  </Space>
+                  <div style={{ marginTop: 8 }}>
+                    <Text type="secondary">
+                      {level.autoExecute ? '⚡ 可自动执行' : '🔒 需要确认执行'}
+                    </Text>
+                  </div>
+                </div>
+              }
+              type={level.id === aiLevel ? 'info' : undefined}
+              style={{ 
+                border: level.id === aiLevel ? `2px solid ${level.color}` : undefined,
+              }}
+            />
+          ))}
+        </Space>
+
+        <Divider />
+        <Paragraph type="secondary">
+          <InfoCircleOutlined /> 提示：级别越高，AI 自主性越强。建议新用户从 L1/L2 开始，熟悉后再提升级别。
+        </Paragraph>
       </Modal>
     </Layout>
   )

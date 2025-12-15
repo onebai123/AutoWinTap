@@ -15,6 +15,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WinTabAgent.Plugins.Browser
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WinTabAgent.Plugins.Windsurf", "WinTabAgent.Plugins.Windsurf\WinTabAgent.Plugins.Windsurf.csproj", "{F6789012-3456-7890-F123-456789012345}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WinTabAgent.Plugins.Shell", "WinTabAgent.Plugins.Shell\WinTabAgent.Plugins.Shell.csproj", "{07890123-4567-8901-0123-567890123456}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU

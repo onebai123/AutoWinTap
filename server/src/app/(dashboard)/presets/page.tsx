@@ -2,7 +2,8 @@
 
 import { useState, useEffect } from 'react'
 import { Card, Table, Button, Space, Tag, Empty, Modal, Input, Select, message, Popconfirm, Typography, Row, Col, Spin, Tooltip, Divider } from 'antd'
-import { PlusOutlined, DeleteOutlined, PlayCircleOutlined, AppstoreOutlined, CheckCircleOutlined, ReloadOutlined, MinusCircleOutlined, ExpandOutlined, SearchOutlined, EyeOutlined, EyeInvisibleOutlined, LeftOutlined, RightOutlined, DesktopOutlined, BorderOuterOutlined, ColumnWidthOutlined, ColumnHeightOutlined } from '@ant-design/icons'
+import { PlusOutlined, DeleteOutlined, PlayCircleOutlined, AppstoreOutlined, CheckCircleOutlined, ReloadOutlined, MinusCircleOutlined, ExpandOutlined, SearchOutlined, EyeOutlined, EyeInvisibleOutlined, LeftOutlined, RightOutlined, DesktopOutlined, BorderOuterOutlined, ColumnWidthOutlined, ColumnHeightOutlined, ThunderboltOutlined, EditOutlined } from '@ant-design/icons'
+import { Checkbox } from 'antd'
 
 const { Text } = Typography
 
@@ -31,6 +32,16 @@ interface Device {
 }
 
 const HOTKEYS = ['Alt+1', 'Alt+2', 'Alt+3', 'Alt+4', 'Alt+5', 'Alt+6', 'Alt+7', 'Alt+8', 'Alt+9']
+const AI_SHORTCUTS = ['Ctrl+1', 'Ctrl+2', 'Ctrl+3', 'Ctrl+4', 'Ctrl+5', 'Ctrl+6', 'Ctrl+7', 'Ctrl+8', 'Ctrl+9']
+
+interface AIComboSuggestion {
+  name: string
+  description: string
+  windows: { handle: number; title: string; processName: string }[]
+  shortcut: string
+  priority: number
+  selected: boolean // 用户是否选中
+}
 
 // 进程颜色
 const getProcessColor = (name: string) => {
@@ -54,6 +65,14 @@ export default function PresetsPage() {
   const [presetHotkey, setPresetHotkey] = useState<string | undefined>()
   const [searchText, setSearchText] = useState('')
   const [showMinimized, setShowMinimized] = useState(true)
+  
+  // AI 组合状态
+  const [aiInputModal, setAiInputModal] = useState(false)
+  const [aiPreviewModal, setAiPreviewModal] = useState(false)
+  const [aiPreference, setAiPreference] = useState('')
+  const [aiCombos, setAiCombos] = useState<AIComboSuggestion[]>([])
+  const [aiLoading, setAiLoading] = useState(false)
+  const [aiSaving, setAiSaving] = useState(false)
 
   useEffect(() => { loadData() }, [])
 
@@ -262,12 +281,112 @@ export default function PresetsPage() {
   }
 
   const deletePreset = async (id: string) => {
-    const res = await fetch(`/api/presets/${id}`, { method: 'DELETE' })
-    const data = await res.json()
-    if (data.success) {
-      message.success('已删除')
-      loadData()
+    try {
+      const res = await fetch(`/api/presets/${id}`, { method: 'DELETE' })
+      const data = await res.json()
+      if (data.success) {
+        message.success('已删除')
+        loadData()
+      } else {
+        message.error(data.error || '删除失败')
+      }
+    } catch {
+      message.error('删除请求失败')
     }
+  }
+
+  // AI 组合 - 打开输入弹窗
+  const openAIComboModal = () => {
+    if (devices.length === 0) {
+      message.warning('没有在线设备')
+      return
+    }
+    setSelectedDevice(devices[0]?.id || '')
+    setAiPreference('')
+    setAiInputModal(true)
+  }
+
+  // AI 组合 - 生成建议
+  const generateAICombos = async () => {
+    if (!selectedDevice) {
+      setSelectedDevice(devices[0]?.id || '')
+    }
+    const deviceId = selectedDevice || devices[0]?.id
+    if (!deviceId) {
+      message.error('请选择设备')
+      return
+    }
+
+    setAiLoading(true)
+    try {
+      const res = await fetch('/api/presets/ai-generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ deviceId, preference: aiPreference })
+      })
+      const data = await res.json()
+      
+      if (data.success && data.data?.combos) {
+        const combosWithSelection = data.data.combos.map((c: Omit<AIComboSuggestion, 'selected'>) => ({ ...c, selected: true }))
+        setAiCombos(combosWithSelection)
+        setAiInputModal(false)
+        setAiPreviewModal(true)
+      } else {
+        message.error(data.error || '生成失败')
+      }
+    } catch {
+      message.error('生成失败，请重试')
+    }
+    setAiLoading(false)
+  }
+
+  // AI 组合 - 切换选中状态
+  const toggleAIComboSelection = (index: number) => {
+    setAiCombos(prev => prev.map((c, i) => i === index ? { ...c, selected: !c.selected } : c))
+  }
+
+  // AI 组合 - 修改快捷键
+  const updateAIComboShortcut = (index: number, shortcut: string) => {
+    setAiCombos(prev => prev.map((c, i) => i === index ? { ...c, shortcut } : c))
+  }
+
+  // AI 组合 - 保存选中的组合
+  const saveAICombos = async () => {
+    const selectedCombos = aiCombos.filter(c => c.selected)
+    if (selectedCombos.length === 0) {
+      message.warning('请至少选择一个组合')
+      return
+    }
+
+    setAiSaving(true)
+    try {
+      const res = await fetch('/api/presets/batch-save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          deviceId: selectedDevice || devices[0]?.id,
+          combos: selectedCombos.map(c => ({
+            name: c.name,
+            windows: c.windows,
+            shortcut: c.shortcut
+          })),
+          overwrite: true
+        })
+      })
+      const data = await res.json()
+      
+      if (data.success) {
+        message.success(`✓ 已创建 ${data.data.count} 个组合`)
+        setAiPreviewModal(false)
+        setAiCombos([])
+        loadData()
+      } else {
+        message.error(data.error || '保存失败')
+      }
+    } catch {
+      message.error('保存失败')
+    }
+    setAiSaving(false)
   }
 
   const columns = [
@@ -302,6 +421,9 @@ export default function PresetsPage() {
         extra={
           <Space>
             <Button icon={<ReloadOutlined />} onClick={loadData}>刷新</Button>
+            <Button icon={<ThunderboltOutlined />} onClick={openAIComboModal} disabled={devices.length === 0}>
+              AI 组合
+            </Button>
             <Button type="primary" icon={<PlusOutlined />} onClick={openCreateModal} disabled={devices.length === 0}>
               新建组合
             </Button>
@@ -512,6 +634,112 @@ export default function PresetsPage() {
                 )
               })}
           </Row>
+        )}
+      </Modal>
+
+      {/* AI 组合 - 输入偏好 */}
+      <Modal
+        title={<Space><ThunderboltOutlined /> AI 智能组合</Space>}
+        open={aiInputModal}
+        onCancel={() => setAiInputModal(false)}
+        onOk={generateAICombos}
+        okText="生成组合"
+        okButtonProps={{ loading: aiLoading }}
+        cancelText="取消"
+      >
+        <div style={{ marginBottom: 16 }}>
+          <Text type="secondary">选择设备</Text>
+          <Select 
+            value={selectedDevice} 
+            onChange={setSelectedDevice}
+            style={{ width: '100%', marginTop: 4 }}
+            size="large"
+          >
+            {devices.map(d => <Select.Option key={d.id} value={d.id}>{d.hostname}</Select.Option>)}
+          </Select>
+        </div>
+        <div style={{ marginBottom: 16 }}>
+          <Text type="secondary">输入你的工作重点（可选）</Text>
+          <Input.TextArea
+            value={aiPreference}
+            onChange={e => setAiPreference(e.target.value)}
+            placeholder="例如：前端开发、Python 项目、文档编写..."
+            rows={3}
+            style={{ marginTop: 4 }}
+          />
+        </div>
+        <Text type="secondary">
+          💡 留空将自动分析当前窗口，优先生成开发相关的组合
+        </Text>
+      </Modal>
+
+      {/* AI 组合 - 预览确认 */}
+      <Modal
+        title={<Space><ThunderboltOutlined /> AI 生成的组合</Space>}
+        open={aiPreviewModal}
+        onCancel={() => setAiPreviewModal(false)}
+        onOk={saveAICombos}
+        okText={`应用选中的组合 (${aiCombos.filter(c => c.selected).length})`}
+        okButtonProps={{ loading: aiSaving, disabled: aiCombos.filter(c => c.selected).length === 0 }}
+        cancelText="取消"
+        width={700}
+      >
+        {aiCombos.length === 0 ? (
+          <Empty description="没有生成组合建议" />
+        ) : (
+          <div>
+            {aiCombos.map((combo, index) => (
+              <Card 
+                key={index} 
+                size="small" 
+                style={{ 
+                  marginBottom: 12, 
+                  opacity: combo.selected ? 1 : 0.5,
+                  border: combo.selected ? '1px solid #1890ff' : '1px solid #d9d9d9'
+                }}
+              >
+                <Row align="middle" gutter={12}>
+                  <Col>
+                    <Checkbox 
+                      checked={combo.selected} 
+                      onChange={() => toggleAIComboSelection(index)}
+                    />
+                  </Col>
+                  <Col flex="auto">
+                    <div>
+                      <Text strong>{combo.name}</Text>
+                      {combo.description && <Text type="secondary" style={{ marginLeft: 8 }}>{combo.description}</Text>}
+                    </div>
+                    <Space size={4} wrap style={{ marginTop: 4 }}>
+                      {combo.windows.map((w, i) => (
+                        <Tag key={i} color={getProcessColor(w.processName)}>{w.processName}</Tag>
+                      ))}
+                    </Space>
+                  </Col>
+                  <Col>
+                    <Text type="secondary">快捷键：</Text>
+                    <Select
+                      value={combo.shortcut}
+                      onChange={(v) => updateAIComboShortcut(index, v)}
+                      style={{ width: 100 }}
+                      size="small"
+                      allowClear
+                      placeholder="无"
+                    >
+                      {AI_SHORTCUTS.map(k => (
+                        <Select.Option key={k} value={k} disabled={aiCombos.some((c, i) => i !== index && c.shortcut === k)}>
+                          {k}
+                        </Select.Option>
+                      ))}
+                    </Select>
+                  </Col>
+                </Row>
+              </Card>
+            ))}
+            <div style={{ marginTop: 16, padding: 12, background: '#fffbe6', borderRadius: 4 }}>
+              <Text type="warning">⚠️ 确认后将覆盖已有的相同快捷键配置</Text>
+            </div>
+          </div>
         )}
       </Modal>
     </>
