@@ -18,6 +18,7 @@ interface WindowInfo {
 
 interface Preset {
   id: string
+  shortcut?: string
   name: string
   hotkey: string
   deviceId: string
@@ -32,7 +33,7 @@ interface Device {
 }
 
 const HOTKEYS = ['Alt+1', 'Alt+2', 'Alt+3', 'Alt+4', 'Alt+5', 'Alt+6', 'Alt+7', 'Alt+8', 'Alt+9']
-const AI_SHORTCUTS = ['Ctrl+1', 'Ctrl+2', 'Ctrl+3', 'Ctrl+4', 'Ctrl+5', 'Ctrl+6', 'Ctrl+7', 'Ctrl+8', 'Ctrl+9']
+const AI_SHORTCUTS = ['Alt+1', 'Alt+2', 'Alt+3', 'Alt+4', 'Alt+5', 'Alt+6', 'Alt+7', 'Alt+8', 'Alt+9']
 
 interface AIComboSuggestion {
   name: string
@@ -73,6 +74,13 @@ export default function PresetsPage() {
   const [aiCombos, setAiCombos] = useState<AIComboSuggestion[]>([])
   const [aiLoading, setAiLoading] = useState(false)
   const [aiSaving, setAiSaving] = useState(false)
+  
+  // 批量删除状态
+  const [selectedPresetIds, setSelectedPresetIds] = useState<string[]>([])
+  const [batchDeleting, setBatchDeleting] = useState(false)
+  
+  // 编辑组合状态（复用新建弹窗）
+  const [editingPresetId, setEditingPresetId] = useState<string | null>(null)
 
   useEffect(() => { loadData() }, [])
 
@@ -100,6 +108,19 @@ export default function PresetsPage() {
     }
     message.success('✓ 窗口已最小化')
     loadWindows(selectedDevice) // 刷新状态
+  }
+
+  // 激活单个窗口（仅激活，不刷新列表，保持选择状态）
+  const activateSingleWindow = async (handle: number, e: React.MouseEvent) => {
+    e.stopPropagation() // 阻止触发卡片点击
+    if (!selectedDevice) return
+    await fetch(`/api/agents/${selectedDevice}/execute`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ plugin: 'window-control', action: 'activate', params: { handle } }),
+    })
+    message.success('✓ 窗口已激活')
+    // 不刷新列表，保持选择状态
   }
 
   // 切换虚拟桌面
@@ -240,6 +261,11 @@ export default function PresetsPage() {
       return
     }
 
+    // 编辑模式：先删除旧的
+    if (editingPresetId) {
+      await fetch(`/api/presets/${editingPresetId}`, { method: 'DELETE' })
+    }
+
     const windows = availableWindows
       .filter(w => selectedWindows.includes(w.handle))
       .map(w => ({ handle: w.handle, title: w.title, processName: w.processName }))
@@ -257,8 +283,9 @@ export default function PresetsPage() {
 
     const data = await res.json()
     if (data.success) {
-      message.success('✓ 组合已创建')
+      message.success(editingPresetId ? '✓ 组合已更新' : '✓ 组合已创建')
       setCreateModal(false)
+      setEditingPresetId(null)
       loadData()
     } else {
       message.error(data.error || '创建失败')
@@ -293,6 +320,47 @@ export default function PresetsPage() {
     } catch {
       message.error('删除请求失败')
     }
+  }
+
+  // 打开编辑弹窗（复用新建弹窗）
+  const openEditModal = async (preset: Preset) => {
+    // 设置编辑 ID
+    setEditingPresetId(preset.id)
+    // 设置设备
+    setSelectedDevice(preset.deviceId)
+    // 预填数据
+    setPresetName(preset.name)
+    setPresetHotkey(preset.hotkey || undefined)
+    // 加载窗口列表并预选
+    await loadWindows(preset.deviceId)
+    // 预选已有的窗口 handles
+    setSelectedWindows(preset.windows.map(w => w.handle))
+    // 打开弹窗
+    setCreateModal(true)
+  }
+
+  // 批量删除
+  const batchDeletePresets = async (ids: string[]) => {
+    if (ids.length === 0) return
+    setBatchDeleting(true)
+    let successCount = 0
+    for (const id of ids) {
+      try {
+        const res = await fetch(`/api/presets/${id}`, { method: 'DELETE' })
+        const data = await res.json()
+        if (data.success) successCount++
+      } catch { /* ignore */ }
+    }
+    setBatchDeleting(false)
+    setSelectedPresetIds([])
+    message.success(`已删除 ${successCount} 个组合`)
+    loadData()
+  }
+
+  // 全部删除
+  const deleteAllPresets = () => {
+    const allIds = presets.map(p => p.id)
+    batchDeletePresets(allIds)
   }
 
   // AI 组合 - 打开输入弹窗
@@ -350,6 +418,25 @@ export default function PresetsPage() {
     setAiCombos(prev => prev.map((c, i) => i === index ? { ...c, shortcut } : c))
   }
 
+  // AI 组合 - 编辑名称
+  const updateAIComboName = (index: number, name: string) => {
+    setAiCombos(prev => prev.map((c, i) => i === index ? { ...c, name } : c))
+  }
+
+  // AI 组合 - 编辑描述
+  const updateAIComboDescription = (index: number, description: string) => {
+    setAiCombos(prev => prev.map((c, i) => i === index ? { ...c, description } : c))
+  }
+
+  // AI 组合 - 移除窗口
+  const removeWindowFromCombo = (comboIndex: number, windowIndex: number) => {
+    setAiCombos(prev => prev.map((c, i) => {
+      if (i !== comboIndex) return c
+      const newWindows = c.windows.filter((_, wi) => wi !== windowIndex)
+      return { ...c, windows: newWindows }
+    }))
+  }
+
   // AI 组合 - 保存选中的组合
   const saveAICombos = async () => {
     const selectedCombos = aiCombos.filter(c => c.selected)
@@ -401,12 +488,15 @@ export default function PresetsPage() {
           ))}
         </Space>
       )},
-    { title: '操作', key: 'actions', width: 180,
+    { title: '操作', key: 'actions', width: 220,
       render: (_: unknown, record: Preset) => (
         <Space>
           <Button type="primary" size="small" icon={<PlayCircleOutlined />} onClick={() => activatePreset(record)}>
             激活
           </Button>
+          <Tooltip title="编辑">
+            <Button type="text" size="small" icon={<EditOutlined />} onClick={() => openEditModal(record)} />
+          </Tooltip>
           <Popconfirm title="确认删除？" onConfirm={() => deletePreset(record.id)} okText="删除" cancelText="取消">
             <Button type="text" danger size="small" icon={<DeleteOutlined />} />
           </Popconfirm>
@@ -421,6 +511,31 @@ export default function PresetsPage() {
         extra={
           <Space>
             <Button icon={<ReloadOutlined />} onClick={loadData}>刷新</Button>
+            {selectedPresetIds.length > 0 && (
+              <Popconfirm 
+                title={`确认删除选中的 ${selectedPresetIds.length} 个组合？`} 
+                onConfirm={() => batchDeletePresets(selectedPresetIds)}
+                okText="删除" 
+                cancelText="取消"
+              >
+                <Button danger loading={batchDeleting}>
+                  删除选中 ({selectedPresetIds.length})
+                </Button>
+              </Popconfirm>
+            )}
+            {presets.length > 0 && (
+              <Popconfirm 
+                title={`确认删除全部 ${presets.length} 个组合？`} 
+                onConfirm={deleteAllPresets}
+                okText="全部删除" 
+                cancelText="取消"
+                okButtonProps={{ danger: true }}
+              >
+                <Button danger type="text" loading={batchDeleting}>
+                  清空全部
+                </Button>
+              </Popconfirm>
+            )}
             <Button icon={<ThunderboltOutlined />} onClick={openAIComboModal} disabled={devices.length === 0}>
               AI 组合
             </Button>
@@ -435,7 +550,17 @@ export default function PresetsPage() {
         ) : presets.length === 0 ? (
           <Empty description={<span>点击「新建组合」选择要组合的窗口<br/><Text type="secondary">一键切换工作布局，支持快捷键</Text></span>} />
         ) : (
-          <Table columns={columns} dataSource={presets} rowKey="id" loading={loading} pagination={false} />
+          <Table 
+            columns={columns} 
+            dataSource={presets} 
+            rowKey="id" 
+            loading={loading} 
+            pagination={false}
+            rowSelection={{
+              selectedRowKeys: selectedPresetIds,
+              onChange: (keys) => setSelectedPresetIds(keys as string[]),
+            }}
+          />
         )}
       </Card>
 
@@ -477,13 +602,13 @@ export default function PresetsPage() {
         </Card>
       )}
 
-      {/* 创建组合 - 卡片点选 */}
+      {/* 创建/编辑组合 - 卡片点选 */}
       <Modal
-        title="新建窗口组合"
+        title={editingPresetId ? "编辑窗口组合" : "新建窗口组合"}
         open={createModal}
-        onCancel={() => setCreateModal(false)}
+        onCancel={() => { setCreateModal(false); setEditingPresetId(null) }}
         onOk={handleCreate}
-        okText={`创建 (${selectedWindows.length}个窗口)`}
+        okText={editingPresetId ? `保存 (${selectedWindows.length}个窗口)` : `创建 (${selectedWindows.length}个窗口)`}
         okButtonProps={{ disabled: selectedWindows.length === 0 }}
         width={800}
         styles={{ body: { maxHeight: '70vh', overflow: 'auto' } }}
@@ -608,6 +733,7 @@ export default function PresetsPage() {
                     !w.processName.toLowerCase().includes(searchText.toLowerCase())) return false
                 return true
               })
+              .sort((a, b) => a.processName.localeCompare(b.processName)) // 按进程名排序，同类放一起
               .map(win => {
                 const selected = selectedWindows.includes(win.handle)
                 return (
@@ -623,12 +749,26 @@ export default function PresetsPage() {
                         opacity: win.isMinimized ? 0.7 : 1,
                       }}
                     >
-                      <Space>
-                        {selected && <CheckCircleOutlined style={{ color: '#1890ff' }} />}
-                        <Tag color={getProcessColor(win.processName)}>{win.processName}</Tag>
-                        <Text ellipsis style={{ maxWidth: 250 }}>{win.title}</Text>
-                        {win.isMinimized && <Tag>最小化</Tag>}
-                      </Space>
+                      <Row justify="space-between" align="middle" style={{ width: '100%' }}>
+                        <Col>
+                          <Space>
+                            {selected && <CheckCircleOutlined style={{ color: '#1890ff' }} />}
+                            <Tag color={getProcessColor(win.processName)}>{win.processName}</Tag>
+                            <Text ellipsis style={{ maxWidth: 200 }}>{win.title}</Text>
+                            {win.isMinimized && <Tag>最小化</Tag>}
+                          </Space>
+                        </Col>
+                        <Col>
+                          <Tooltip title="激活此窗口">
+                            <Button 
+                              type="link" 
+                              size="small" 
+                              icon={<ExpandOutlined />}
+                              onClick={(e) => activateSingleWindow(win.handle, e)}
+                            />
+                          </Tooltip>
+                        </Col>
+                      </Row>
                     </Card>
                   </Col>
                 )
@@ -706,13 +846,32 @@ export default function PresetsPage() {
                     />
                   </Col>
                   <Col flex="auto">
-                    <div>
-                      <Text strong>{combo.name}</Text>
-                      {combo.description && <Text type="secondary" style={{ marginLeft: 8 }}>{combo.description}</Text>}
+                    <div style={{ marginBottom: 4 }}>
+                      <Input
+                        value={combo.name}
+                        onChange={e => updateAIComboName(index, e.target.value)}
+                        style={{ width: 150, marginRight: 8 }}
+                        size="small"
+                        placeholder="组合名称"
+                      />
+                      <Input
+                        value={combo.description}
+                        onChange={e => updateAIComboDescription(index, e.target.value)}
+                        style={{ width: 200 }}
+                        size="small"
+                        placeholder="描述（可选）"
+                      />
                     </div>
-                    <Space size={4} wrap style={{ marginTop: 4 }}>
+                    <Space size={4} wrap>
                       {combo.windows.map((w, i) => (
-                        <Tag key={i} color={getProcessColor(w.processName)}>{w.processName}</Tag>
+                        <Tag 
+                          key={i} 
+                          color={getProcessColor(w.processName)}
+                          closable
+                          onClose={() => removeWindowFromCombo(index, i)}
+                        >
+                          {w.processName}: {w.title.slice(0, 20)}
+                        </Tag>
                       ))}
                     </Space>
                   </Col>

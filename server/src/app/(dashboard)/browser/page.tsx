@@ -1,8 +1,8 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { Card, Tabs, Button, Space, Tag, Empty, message, Typography, List, Input, Select, Row, Col, Table, Modal, Badge, Tooltip, Alert, Switch } from 'antd'
-import { ChromeOutlined, ReloadOutlined, LinkOutlined, CodeOutlined, ApiOutlined, PlayCircleOutlined, DisconnectOutlined, ClearOutlined, SearchOutlined, InfoCircleOutlined, SyncOutlined, AimOutlined, EyeOutlined } from '@ant-design/icons'
+import { Card, Tabs, Button, Space, Tag, Empty, message, Typography, List, Input, Select, Row, Col, Table, Modal, Badge, Tooltip, Alert, Switch, Statistic, Divider } from 'antd'
+import { ChromeOutlined, ReloadOutlined, LinkOutlined, CodeOutlined, ApiOutlined, PlayCircleOutlined, DisconnectOutlined, ClearOutlined, SearchOutlined, InfoCircleOutlined, SyncOutlined, AimOutlined, EyeOutlined, RobotOutlined, CopyOutlined, ExclamationCircleOutlined, WarningOutlined, CloseCircleOutlined } from '@ant-design/icons'
 
 const { Text, Paragraph } = Typography
 const { TextArea } = Input
@@ -77,6 +77,23 @@ export default function BrowserDebugPage() {
   const [detailModal, setDetailModal] = useState<NetworkRequest | null>(null)
   const [autoConnect, setAutoConnect] = useState(true)
   const [autoRefresh, setAutoRefresh] = useState(true)
+  const [showOnlyErrors, setShowOnlyErrors] = useState(false)
+  const [showOnlyFailed, setShowOnlyFailed] = useState(false)
+  const [showOnlyApi, setShowOnlyApi] = useState(false)
+  const [aiAnalyzing, setAiAnalyzing] = useState(false)
+  const [aiResult, setAiResult] = useState<string | null>(null)
+  const [aiModal, setAiModal] = useState(false)
+  const [overflowElements, setOverflowElements] = useState<Array<{ tag: string; id: string; className: string; rect: { x: number; y: number; width: number; height: number }; scrollWidth: number; scrollHeight: number; clientWidth: number; clientHeight: number }>>([])
+  const [pageScreenshot, setPageScreenshot] = useState<string | null>(null)
+  const [screenshotModal, setScreenshotModal] = useState(false)
+
+  // 统计计算
+  const errorCount = consoleLogs.filter(l => l.type === 'error').length
+  const warnCount = consoleLogs.filter(l => l.type === 'warn').length
+  const failedRequestCount = networkRequests.filter(r => r.status >= 400).length
+  const avgRequestTime = networkRequests.length > 0 
+    ? Math.round(networkRequests.reduce((sum, r) => sum + (r.time || 0), 0) / networkRequests.length) 
+    : 0
 
   // 加载设备
   useEffect(() => {
@@ -139,6 +156,22 @@ export default function BrowserDebugPage() {
 
   // 连接页面
   const connectPage = async (pageId: string) => {
+    // 如果已连接其他页面，先断开
+    if (connectedPage && connectedPage !== pageId) {
+      await fetch(`/api/agents/${selectedDevice}/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ plugin: 'browser-debug', action: 'disconnect', params: { pageId: connectedPage } }),
+      })
+    }
+    
+    // 清理旧数据
+    setConsoleLogs([])
+    setNetworkRequests([])
+    setDomChanges([])
+    setElements([])
+    setExecuteResult(null)
+    
     try {
       const res = await fetch(`/api/agents/${selectedDevice}/execute`, {
         method: 'POST',
@@ -298,20 +331,69 @@ export default function BrowserDebugPage() {
     }
   }
 
+  // AI 分析
+  const analyzeWithAI = async (type: 'error' | 'request' | 'all') => {
+    setAiAnalyzing(true)
+    setAiResult(null)
+    
+    const data: Record<string, unknown> = {}
+    if (type === 'error' || type === 'all') {
+      data.errors = consoleLogs.filter(l => l.type === 'error' || l.type === 'warn')
+    }
+    if (type === 'request' || type === 'all') {
+      data.requests = networkRequests.filter(r => r.status >= 400).slice(0, 10)
+    }
+
+    try {
+      const res = await fetch('/api/ai/analyze-browser', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type, data })
+      })
+      const result = await res.json()
+      if (result.success) {
+        setAiResult(result.data?.content || result.data || '分析完成')
+      } else {
+        setAiResult(`分析失败: ${result.error}`)
+      }
+    } catch (err) {
+      setAiResult('AI 分析请求失败')
+    }
+    setAiAnalyzing(false)
+    setAiModal(true)
+  }
+
   // 筛选日志
   const filteredLogs = consoleLogs.filter(log => {
     const logType = log.type || 'log'
     const logText = log.text || ''
+    if (showOnlyErrors && logType !== 'error') return false
     if (consoleFilter !== 'all' && logType !== consoleFilter) return false
     if (consoleSearch && !logText.toLowerCase().includes(consoleSearch.toLowerCase())) return false
     return true
   })
 
   // 筛选网络
-  const filteredNetwork = networkRequests.filter(req => {
-    if (networkFilter !== 'all' && req.type !== networkFilter) return false
-    return true
-  })
+  const filteredNetwork = networkRequests
+    .filter(req => {
+      if (showOnlyFailed && req.status < 400) return false
+      if (showOnlyApi && req.type !== 'xhr' && req.type !== 'fetch') return false
+      if (networkFilter !== 'all' && req.type !== networkFilter) return false
+      return true
+    })
+    .sort((a, b) => {
+      // 优先级：POST > XHR/Fetch > 其他
+      const getPriority = (req: NetworkRequest) => {
+        if (req.method === 'POST') return 0
+        if (req.type === 'xhr' || req.type === 'fetch') return 1
+        if (req.type === 'document') return 5
+        if (req.type === 'script') return 6
+        if (req.type === 'stylesheet') return 7
+        if (req.type === 'image' || req.type === 'font') return 8
+        return 3
+      }
+      return getPriority(a) - getPriority(b)
+    })
 
   const logTypeColors: Record<string, string> = {
     log: 'default', info: 'blue', warn: 'orange', error: 'red'
@@ -395,7 +477,45 @@ export default function BrowserDebugPage() {
               <code style={{ background: '#f5f5f5', padding: '8px', display: 'block', borderRadius: 4 }}>
                 chrome.exe --remote-debugging-port=9222
               </code>
-              <p style={{ marginTop: 8 }}>或关闭所有 Chrome 后重新启动</p>
+              <p style={{ marginTop: 8 }}>
+                <Button 
+                  type="primary" 
+                  icon={<ChromeOutlined />}
+                  onClick={async () => {
+                    if (!selectedDevice) {
+                      message.warning('请先选择设备')
+                      return
+                    }
+                    try {
+                      const res = await fetch(`/api/agents/${selectedDevice}/execute`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ 
+                          plugin: 'shell', 
+                          action: 'execute', 
+                          params: { 
+                            command: '$paths=@("C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe","C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe","D:\\software\\soft\\Google\\Chrome\\Application\\chrome.exe"); $p=$paths|Where-Object{Test-Path $_}|Select-Object -First 1; if($p){Start-Process $p -ArgumentList "--remote-debugging-port=9222","--user-data-dir=C:\\ChromeDebug"}else{Write-Error "Chrome not found"}',
+                            shell: 'powershell',
+                            timeout: 5000
+                          } 
+                        })
+                      })
+                      const data = await res.json()
+                      if (data.success) {
+                        message.success('✓ Chrome 调试模式已启动，请稍等后刷新页面')
+                        setTimeout(() => loadPages(), 2000)
+                      } else {
+                        message.error(data.error || '启动失败')
+                      }
+                    } catch {
+                      message.error('启动失败')
+                    }
+                  }}
+                >
+                  一键启动调试浏览器
+                </Button>
+                <Text type="secondary" style={{ marginLeft: 8 }}>会关闭已有 Chrome 窗口</Text>
+              </p>
             </div>
           }
           style={{ marginBottom: 16 }}
@@ -435,6 +555,58 @@ export default function BrowserDebugPage() {
         )}
       </Card>
 
+      {/* 状态面板 */}
+      {connectedPage && (
+        <Card size="small" style={{ marginBottom: 16 }}>
+          <Row gutter={24} align="middle">
+            <Col>
+              <Statistic 
+                title="错误" 
+                value={errorCount} 
+                valueStyle={{ color: errorCount > 0 ? '#ff4d4f' : '#52c41a', fontSize: 20 }}
+                prefix={<CloseCircleOutlined />}
+              />
+            </Col>
+            <Col>
+              <Statistic 
+                title="警告" 
+                value={warnCount} 
+                valueStyle={{ color: warnCount > 0 ? '#faad14' : '#52c41a', fontSize: 20 }}
+                prefix={<WarningOutlined />}
+              />
+            </Col>
+            <Col>
+              <Statistic title="请求" value={networkRequests.length} valueStyle={{ fontSize: 20 }} />
+            </Col>
+            <Col>
+              <Statistic 
+                title="失败" 
+                value={failedRequestCount} 
+                valueStyle={{ color: failedRequestCount > 0 ? '#ff4d4f' : '#52c41a', fontSize: 20 }}
+              />
+            </Col>
+            <Col>
+              <Statistic title="平均耗时" value={avgRequestTime} suffix="ms" valueStyle={{ fontSize: 20 }} />
+            </Col>
+            <Col flex="auto" />
+            <Col>
+              <Space>
+                <Tooltip title="AI 分析所有问题">
+                  <Button 
+                    icon={<RobotOutlined />} 
+                    onClick={() => analyzeWithAI('all')}
+                    loading={aiAnalyzing}
+                    disabled={errorCount === 0 && failedRequestCount === 0}
+                  >
+                    AI 分析
+                  </Button>
+                </Tooltip>
+              </Space>
+            </Col>
+          </Row>
+        </Card>
+      )}
+
       {/* 调试面板 */}
       {connectedPage && (
         <Card size="small">
@@ -442,12 +614,28 @@ export default function BrowserDebugPage() {
             items={[
               {
                 key: 'console',
-                label: <span><CodeOutlined /> 控制台 ({filteredLogs.length})</span>,
+                label: (
+                  <span>
+                    <CodeOutlined /> 控制台 ({filteredLogs.length})
+                    {errorCount > 0 && <Badge count={errorCount} style={{ marginLeft: 4 }} />}
+                  </span>
+                ),
                 children: (
                   <div>
                     <Row gutter={8} style={{ marginBottom: 8 }}>
                       <Col>
-                        <Select value={consoleFilter} onChange={setConsoleFilter} style={{ width: 100 }}>
+                        <Button 
+                          type={showOnlyErrors ? 'primary' : 'default'} 
+                          danger={showOnlyErrors}
+                          size="small"
+                          icon={<CloseCircleOutlined />}
+                          onClick={() => setShowOnlyErrors(!showOnlyErrors)}
+                        >
+                          只看错误 {errorCount > 0 && `(${errorCount})`}
+                        </Button>
+                      </Col>
+                      <Col>
+                        <Select value={consoleFilter} onChange={setConsoleFilter} style={{ width: 100 }} size="small">
                           <Select.Option value="all">全部</Select.Option>
                           <Select.Option value="log">Log</Select.Option>
                           <Select.Option value="info">Info</Select.Option>
@@ -460,6 +648,7 @@ export default function BrowserDebugPage() {
                           prefix={<SearchOutlined />}
                           placeholder="搜索日志..."
                           value={consoleSearch}
+                          size="small"
                           onChange={e => setConsoleSearch(e.target.value)}
                           allowClear
                         />
@@ -492,12 +681,36 @@ export default function BrowserDebugPage() {
               },
               {
                 key: 'network',
-                label: <span><ApiOutlined /> 网络 ({filteredNetwork.length})</span>,
+                label: (
+                  <span>
+                    <ApiOutlined /> 网络 ({filteredNetwork.length})
+                    {failedRequestCount > 0 && <Badge count={failedRequestCount} style={{ marginLeft: 4, backgroundColor: '#ff4d4f' }} />}
+                  </span>
+                ),
                 children: (
                   <div>
                     <Row gutter={8} style={{ marginBottom: 8 }}>
                       <Col>
-                        <Select value={networkFilter} onChange={setNetworkFilter} style={{ width: 100 }}>
+                        <Button 
+                          type={showOnlyFailed ? 'primary' : 'default'} 
+                          danger={showOnlyFailed}
+                          size="small"
+                          onClick={() => setShowOnlyFailed(!showOnlyFailed)}
+                        >
+                          只看失败 {failedRequestCount > 0 && `(${failedRequestCount})`}
+                        </Button>
+                      </Col>
+                      <Col>
+                        <Button 
+                          type={showOnlyApi ? 'primary' : 'default'}
+                          size="small"
+                          onClick={() => setShowOnlyApi(!showOnlyApi)}
+                        >
+                          只看 API
+                        </Button>
+                      </Col>
+                      <Col>
+                        <Select value={networkFilter} onChange={setNetworkFilter} style={{ width: 100 }} size="small">
                           <Select.Option value="all">全部</Select.Option>
                           <Select.Option value="xhr">XHR</Select.Option>
                           <Select.Option value="fetch">Fetch</Select.Option>
@@ -507,7 +720,7 @@ export default function BrowserDebugPage() {
                         </Select>
                       </Col>
                       <Col>
-                        <Button icon={<ClearOutlined />} onClick={() => setNetworkRequests([])}>清空</Button>
+                        <Button icon={<ClearOutlined />} size="small" onClick={() => setNetworkRequests([])}>清空</Button>
                       </Col>
                     </Row>
                     <Table
@@ -517,7 +730,13 @@ export default function BrowserDebugPage() {
                       rowKey="id"
                       pagination={false}
                       scroll={{ y: 250 }}
-                      onRow={record => ({ onClick: () => setDetailModal(record) })}
+                      onRow={record => ({ 
+                        onClick: () => setDetailModal(record),
+                        style: { 
+                          background: record.status >= 400 ? '#fff2f0' : undefined,
+                          cursor: 'pointer'
+                        }
+                      })}
                     />
                   </div>
                 ),
@@ -656,17 +875,62 @@ export default function BrowserDebugPage() {
         title="请求详情"
         open={!!detailModal}
         onCancel={() => setDetailModal(null)}
-        footer={null}
-        width={600}
+        footer={[
+          <Button key="copy" icon={<CopyOutlined />} onClick={() => {
+            if (detailModal) {
+              navigator.clipboard.writeText(`curl -X ${detailModal.method} '${detailModal.url}'`)
+              message.success('cURL 命令已复制')
+            }
+          }}>复制 cURL</Button>,
+          <Button key="close" onClick={() => setDetailModal(null)}>关闭</Button>
+        ]}
+        width={700}
       >
         {detailModal && (
           <div>
-            <p><Text strong>URL:</Text> {detailModal.url}</p>
-            <p><Text strong>方法:</Text> {detailModal.method}</p>
-            <p><Text strong>状态:</Text> {detailModal.status}</p>
-            <p><Text strong>类型:</Text> {detailModal.type}</p>
+            <Divider orientation="left">基本信息</Divider>
+            <p><Text strong>URL:</Text> <Text copyable>{detailModal.url}</Text></p>
+            <p><Text strong>方法:</Text> <Tag>{detailModal.method}</Tag></p>
+            <p><Text strong>状态:</Text> <Tag color={detailModal.status >= 400 ? 'red' : detailModal.status >= 200 ? 'green' : 'default'}>{detailModal.status}</Tag></p>
+            <p><Text strong>类型:</Text> <Tag>{detailModal.type}</Tag></p>
             <p><Text strong>耗时:</Text> {detailModal.time}ms</p>
+            <Divider orientation="left">cURL 命令</Divider>
+            <pre style={{ background: '#f5f5f5', padding: 12, borderRadius: 4, overflow: 'auto' }}>
+              {`curl -X ${detailModal.method} '${detailModal.url}'`}
+            </pre>
           </div>
+        )}
+      </Modal>
+
+      {/* AI 分析弹窗 */}
+      <Modal
+        title={<><RobotOutlined /> AI 分析结果</>}
+        open={aiModal}
+        onCancel={() => setAiModal(false)}
+        footer={[
+          <Button key="copy" icon={<CopyOutlined />} onClick={() => {
+            if (aiResult) {
+              navigator.clipboard.writeText(aiResult)
+              message.success('分析结果已复制')
+            }
+          }}>复制结果</Button>,
+          <Button key="close" type="primary" onClick={() => setAiModal(false)}>关闭</Button>
+        ]}
+        width={800}
+      >
+        {aiAnalyzing ? (
+          <div style={{ textAlign: 'center', padding: 40 }}>
+            <RobotOutlined spin style={{ fontSize: 32, marginBottom: 16 }} />
+            <p>AI 正在分析中...</p>
+          </div>
+        ) : aiResult ? (
+          <div style={{ maxHeight: 500, overflow: 'auto' }}>
+            <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'inherit', margin: 0 }}>
+              {aiResult}
+            </pre>
+          </div>
+        ) : (
+          <Empty description="暂无分析结果" />
         )}
       </Modal>
     </div>

@@ -73,13 +73,15 @@ public class BrowserDebugPlugin : IBrowserPlugin
             "get-elements" => await ExecuteGetElementsAsync(parameters),
             "get-element-style" => await ExecuteGetElementStyleAsync(parameters),
             "highlight-element" => await ExecuteHighlightElementAsync(parameters),
+            "detect-overflow" => await ExecuteDetectOverflowAsync(parameters),
+            "capture-page" => await ExecuteCapturePageAsync(parameters),
             _ => PluginResult.Fail($"Unknown action: {action}")
         };
     }
 
     public IEnumerable<string> GetSupportedActions()
     {
-        return new[] { "get-pages", "connect", "disconnect", "execute-script", "get-console", "get-network", "get-dom-changes", "get-html", "get-elements", "get-element-style", "highlight-element" };
+        return new[] { "get-pages", "connect", "disconnect", "execute-script", "get-console", "get-network", "get-dom-changes", "get-html", "get-elements", "get-element-style", "highlight-element", "detect-overflow", "capture-page" };
     }
 
     #endregion
@@ -621,6 +623,101 @@ public class BrowserDebugPlugin : IBrowserPlugin
         });
 
         return PluginResult.Ok("Highlighted");
+    }
+
+    private async Task<PluginResult> ExecuteDetectOverflowAsync(JsonElement parameters)
+    {
+        if (!parameters.TryGetProperty("pageId", out var pageIdProp))
+        {
+            return PluginResult.Fail("Missing 'pageId' parameter");
+        }
+
+        var pageId = pageIdProp.GetString()!;
+        if (!_connections.TryGetValue(pageId, out var ws))
+        {
+            return PluginResult.Fail($"Not connected to page: {pageId}");
+        }
+
+        var result = await SendCommandAsync(ws, "Runtime.evaluate", new
+        {
+            expression = @"
+                (function() {
+                    const overflowElements = [];
+                    document.querySelectorAll('*').forEach(el => {
+                        const styles = window.getComputedStyle(el);
+                        const rect = el.getBoundingClientRect();
+                        
+                        // 检测溢出
+                        const isOverflowHidden = styles.overflow === 'hidden' || 
+                                                 styles.overflowX === 'hidden' || 
+                                                 styles.overflowY === 'hidden';
+                        const hasOverflow = el.scrollWidth > el.clientWidth || 
+                                           el.scrollHeight > el.clientHeight;
+                        
+                        if (isOverflowHidden && hasOverflow && rect.width > 0 && rect.height > 0) {
+                            overflowElements.push({
+                                tag: el.tagName,
+                                id: el.id || '',
+                                className: (el.className || '').toString().slice(0, 50),
+                                rect: { x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(rect.height) },
+                                scrollWidth: el.scrollWidth,
+                                scrollHeight: el.scrollHeight,
+                                clientWidth: el.clientWidth,
+                                clientHeight: el.clientHeight
+                            });
+                        }
+                    });
+                    return JSON.stringify(overflowElements.slice(0, 20));
+                })()
+            ",
+            returnByValue = true
+        });
+
+        try
+        {
+            var json = JsonDocument.Parse(result);
+            if (json.RootElement.TryGetProperty("result", out var res) && 
+                res.TryGetProperty("value", out var value))
+            {
+                return PluginResult.Ok(JsonSerializer.Deserialize<object>(value.GetString() ?? "[]"));
+            }
+        }
+        catch { }
+
+        return PluginResult.Ok(new List<object>());
+    }
+
+    private async Task<PluginResult> ExecuteCapturePageAsync(JsonElement parameters)
+    {
+        if (!parameters.TryGetProperty("pageId", out var pageIdProp))
+        {
+            return PluginResult.Fail("Missing 'pageId' parameter");
+        }
+
+        var pageId = pageIdProp.GetString()!;
+        if (!_connections.TryGetValue(pageId, out var ws))
+        {
+            return PluginResult.Fail($"Not connected to page: {pageId}");
+        }
+
+        var result = await SendCommandAsync(ws, "Page.captureScreenshot", new
+        {
+            format = "png",
+            quality = 80
+        });
+
+        try
+        {
+            var json = JsonDocument.Parse(result);
+            if (json.RootElement.TryGetProperty("result", out var res) && 
+                res.TryGetProperty("data", out var data))
+            {
+                return PluginResult.Ok(new { image = data.GetString() });
+            }
+        }
+        catch { }
+
+        return PluginResult.Fail("Failed to capture page");
     }
 
     #endregion

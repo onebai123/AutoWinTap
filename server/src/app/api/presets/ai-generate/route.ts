@@ -22,7 +22,7 @@ interface ComboSuggestion {
 }
 
 // 快捷键池
-const SHORTCUT_POOL = ['Ctrl+1', 'Ctrl+2', 'Ctrl+3', 'Ctrl+4', 'Ctrl+5', 'Ctrl+6', 'Ctrl+7', 'Ctrl+8', 'Ctrl+9']
+const SHORTCUT_POOL = ['Alt+1', 'Alt+2', 'Alt+3', 'Alt+4', 'Alt+5', 'Alt+6', 'Alt+7', 'Alt+8', 'Alt+9']
 
 // 窗口分类规则
 const CATEGORIES: Record<string, { keywords: string[]; priority: number }> = {
@@ -72,31 +72,32 @@ async function generateWithAI(windows: WindowInfo[], preference: string, setting
 
   const windowList = windows.map(w => `- ${w.processName}: ${w.title}`).join('\n')
 
-  const systemPrompt = `你是一个桌面窗口管理助手，帮助用户组织窗口组合。
+  const systemPrompt = `你是一个桌面窗口管理助手，帮助用户按【项目】组织窗口组合。
 
-优先级规则（从高到低）：
-1. IDE/编辑器（VS Code, WebStorm, Cursor 等）
-2. 终端（Terminal, PowerShell, CMD）
-3. 浏览器开发工具（DevTools, localhost 页面）
-4. 浏览器
-5. 数据库工具
-6. API 测试工具
-7. 文档/笔记
-8. 其他
+**核心规则：按项目分组，不是按类别分组！**
 
-生成规则：
-- 生成 3-5 个合理的窗口组合
-- 每个组合包含 2-4 个相关窗口
-- 组合名称简洁明了（如"开发环境"、"前端调试"）
-- 同类或相关窗口放在一起
+分组逻辑：
+1. 分析每个窗口标题中的项目名、文件夹路径、localhost端口
+2. 将属于同一项目的 IDE + 浏览器 + 终端 放在一个组合
+3. 例如：Windsurf 打开 "AutoWinTap" 项目，Chrome 打开 "localhost:3000"，它们是同一项目，应该放一组
+4. 组合名称用项目名（如 "AutoWinTap"、"MyProject"）
+5. 最后，无法归属项目的同类窗口才放一起（如多个无关的浏览器）
+
+**错误示例（不要这样做）：**
+- 把所有 IDE 放一组、所有浏览器放一组 ❌
+
+**正确示例：**
+- AutoWinTap: Windsurf(AutoWinTap) + Chrome(localhost:3000) + Terminal(AutoWinTap) ✓
+- PythonProject: PyCharm(my-api) + Chrome(localhost:8000) ✓
+- 浏览器: 剩余的 Chrome 窗口 ✓
 
 返回 JSON 数组格式：
 [
   {
-    "name": "组合名称",
+    "name": "项目名或组合名",
     "description": "简短描述",
-    "windowIndices": [0, 1, 2],  // 窗口在列表中的索引（0开始）
-    "priority": 1  // 优先级，1最高
+    "windowIndices": [0, 1, 2],
+    "priority": 1
   }
 ]
 
@@ -156,81 +157,129 @@ ${windows.map((w, i) => `${i}. ${w.processName}: ${w.title}`).join('\n')}
   }
 }
 
-// 本地智能生成（无 AI 时的备选）
+// 从窗口标题提取项目关键词
+function extractProjectKeywords(title: string): string[] {
+  const keywords: string[] = []
+  
+  // 常见项目路径模式: "xxx - ProjectName" 或 "ProjectName - xxx"
+  const dashParts = title.split(' - ')
+  dashParts.forEach(part => {
+    // 提取文件夹/项目名（通常是英文+数字+下划线/横杠）
+    const matches = part.match(/[A-Za-z][A-Za-z0-9_-]{2,}/g)
+    if (matches) keywords.push(...matches.map(m => m.toLowerCase()))
+  })
+  
+  // 提取路径中的文件夹名
+  const pathMatch = title.match(/[\\\/]([A-Za-z][A-Za-z0-9_-]+)[\\\/]/g)
+  if (pathMatch) {
+    pathMatch.forEach(p => {
+      const name = p.replace(/[\\\/]/g, '').toLowerCase()
+      if (name.length > 2) keywords.push(name)
+    })
+  }
+  
+  // localhost:端口 可能是同一项目
+  const portMatch = title.match(/localhost:(\d+)/i)
+  if (portMatch) keywords.push(`port${portMatch[1]}`)
+  
+  return [...new Set(keywords)]
+}
+
+// 计算两个窗口的项目关联度
+function getProjectSimilarity(w1: WindowInfo, w2: WindowInfo): number {
+  const k1 = extractProjectKeywords(w1.title)
+  const k2 = extractProjectKeywords(w2.title)
+  
+  let score = 0
+  k1.forEach(k => {
+    if (k2.includes(k)) score += 1
+  })
+  return score
+}
+
+// 本地智能生成（按项目优先分组）
 function generateLocally(windows: WindowInfo[]): ComboSuggestion[] {
-  // 按类别分组
+  const combos: ComboSuggestion[] = []
+  const usedHandles = new Set<number>()
+  
+  // 1. 先找出所有 IDE 窗口，作为项目锚点
+  const ideWindows = windows.filter(w => categorizeWindow(w) === 'IDE')
+  const otherWindows = windows.filter(w => categorizeWindow(w) !== 'IDE')
+  
+  // 2. 为每个 IDE 窗口找相关的浏览器和终端
+  for (const ide of ideWindows) {
+    if (usedHandles.has(ide.handle)) continue
+    
+    const projectWindows: WindowInfo[] = [ide]
+    usedHandles.add(ide.handle)
+    
+    // 找与这个 IDE 相关的其他窗口
+    const ideKeywords = extractProjectKeywords(ide.title)
+    
+    // 按关联度排序其他窗口
+    const related = otherWindows
+      .filter(w => !usedHandles.has(w.handle))
+      .map(w => ({ w, score: getProjectSimilarity(ide, w), cat: categorizeWindow(w) }))
+      .filter(x => x.score > 0 || ['TERMINAL', 'BROWSER', 'BROWSER_DEV'].includes(x.cat))
+      .sort((a, b) => b.score - a.score)
+    
+    // 优先取关联度高的，每类最多取1-2个
+    const catCount: Record<string, number> = {}
+    for (const r of related) {
+      if (projectWindows.length >= 4) break
+      catCount[r.cat] = (catCount[r.cat] || 0) + 1
+      if (catCount[r.cat] <= 2) {
+        projectWindows.push(r.w)
+        usedHandles.add(r.w.handle)
+      }
+    }
+    
+    // 只有多于1个窗口才创建组合
+    if (projectWindows.length > 1) {
+      // 尝试从标题提取项目名
+      let projectName = '项目'
+      for (const kw of ideKeywords) {
+        if (kw.length > 3 && !['code', 'visual', 'studio', 'windsurf', 'cursor', 'pycharm'].includes(kw)) {
+          projectName = kw.charAt(0).toUpperCase() + kw.slice(1)
+          break
+        }
+      }
+      
+      combos.push({
+        name: projectName,
+        description: `${ide.processName} + 相关窗口`,
+        windows: projectWindows,
+        shortcut: SHORTCUT_POOL[combos.length] || '',
+        priority: combos.length + 1
+      })
+    }
+  }
+  
+  // 3. 剩余窗口按类别分组
+  const remaining = windows.filter(w => !usedHandles.has(w.handle))
   const groups: Record<string, WindowInfo[]> = {}
-  windows.forEach(w => {
+  remaining.forEach(w => {
     const cat = categorizeWindow(w)
     if (!groups[cat]) groups[cat] = []
     groups[cat].push(w)
   })
-
-  const combos: ComboSuggestion[] = []
-
-  // 开发环境组合：IDE + 终端
-  const ideWindows = groups['IDE'] || []
-  const terminalWindows = groups['TERMINAL'] || []
-  if (ideWindows.length > 0) {
-    combos.push({
-      name: '开发环境',
-      description: 'IDE 和终端',
-      windows: [...ideWindows.slice(0, 2), ...terminalWindows.slice(0, 1)].slice(0, 4),
-      shortcut: SHORTCUT_POOL[combos.length] || '',
-      priority: 1
-    })
+  
+  // 为每个类别创建组合（如果超过2个窗口）
+  const catNames: Record<string, string> = {
+    'BROWSER': '浏览器',
+    'TERMINAL': '终端',
+    'DATABASE': '数据库',
+    'API': 'API 工具',
+    'DOCS': '文档',
+    'OTHER': '其他'
   }
-
-  // 前端调试：浏览器 + IDE
-  const browserWindows = groups['BROWSER'] || []
-  const devToolsWindows = groups['BROWSER_DEV'] || []
-  if (browserWindows.length > 0 && ideWindows.length > 0) {
-    combos.push({
-      name: '前端调试',
-      description: '浏览器和编辑器',
-      windows: [...browserWindows.slice(0, 1), ...devToolsWindows.slice(0, 1), ...ideWindows.slice(0, 1)].slice(0, 3),
-      shortcut: SHORTCUT_POOL[combos.length] || '',
-      priority: 2
-    })
-  }
-
-  // 数据库：数据库工具 + IDE
-  const dbWindows = groups['DATABASE'] || []
-  if (dbWindows.length > 0) {
-    combos.push({
-      name: '数据库操作',
-      description: '数据库工具',
-      windows: [...dbWindows.slice(0, 2), ...ideWindows.slice(0, 1)].slice(0, 3),
-      shortcut: SHORTCUT_POOL[combos.length] || '',
-      priority: 3
-    })
-  }
-
-  // 文档：文档 + 浏览器
-  const docWindows = groups['DOCS'] || []
-  if (docWindows.length > 0) {
-    combos.push({
-      name: '文档编写',
-      description: '文档工具',
-      windows: [...docWindows.slice(0, 2), ...browserWindows.slice(0, 1)].slice(0, 3),
-      shortcut: SHORTCUT_POOL[combos.length] || '',
-      priority: 4
-    })
-  }
-
-  // 如果组合太少，添加一个全部开发工具
-  if (combos.length < 2 && windows.length >= 2) {
-    const devWindows = windows
-      .map(w => ({ w, cat: categorizeWindow(w) }))
-      .filter(x => ['IDE', 'TERMINAL', 'BROWSER', 'BROWSER_DEV'].includes(x.cat))
-      .map(x => x.w)
-      .slice(0, 4)
-    
-    if (devWindows.length >= 2) {
+  
+  for (const [cat, wins] of Object.entries(groups)) {
+    if (wins.length >= 2 && combos.length < 5) {
       combos.push({
-        name: '工作空间',
-        description: '常用开发窗口',
-        windows: devWindows,
+        name: catNames[cat] || cat,
+        description: `${wins.length} 个${catNames[cat] || '窗口'}`,
+        windows: wins.slice(0, 4),
         shortcut: SHORTCUT_POOL[combos.length] || '',
         priority: combos.length + 1
       })

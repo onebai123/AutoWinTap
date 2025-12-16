@@ -16,6 +16,10 @@ if not exist %CHROME_PATH% (
 )
 
 if not exist %CHROME_PATH% (
+    set CHROME_PATH="D:\software\soft\Google\Chrome\Application\chrome.exe"
+)
+
+if not exist %CHROME_PATH% (
     echo [错误] 未找到 Chrome，请手动指定路径
     pause
     exit /b 1

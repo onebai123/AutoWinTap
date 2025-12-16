@@ -33,6 +33,9 @@ public class WindowControlPlugin : IWindowPlugin
     private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 
     [DllImport("user32.dll")]
+    private static extern bool IsIconic(IntPtr hWnd); // 检查窗口是否最小化
+
+    [DllImport("user32.dll")]
     private static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
 
     [DllImport("user32.dll")]
@@ -204,7 +207,11 @@ public class WindowControlPlugin : IWindowPlugin
 
     public Task ActivateWindowAsync(IntPtr handle)
     {
-        ShowWindow(handle, SW_RESTORE);
+        // 只有最小化的窗口才恢复，保持最大化/全屏窗口的原始大小
+        if (IsIconic(handle))
+        {
+            ShowWindow(handle, SW_RESTORE);
+        }
         SetForegroundWindow(handle);
         return Task.CompletedTask;
     }
@@ -268,23 +275,11 @@ public class WindowControlPlugin : IWindowPlugin
 
     public async Task SwitchPresetAsync(List<IntPtr> handles)
     {
-        var allWindows = await GetWindowsAsync();
-        var handleSet = new HashSet<IntPtr>(handles);
-
-        // 最小化不在列表的窗口
-        foreach (var window in allWindows)
-        {
-            if (!handleSet.Contains(window.Handle))
-            {
-                await MinimizeWindowAsync(window.Handle);
-            }
-        }
-
-        // 激活目标窗口
+        // 只激活目标窗口，不最小化其他窗口（避免闪屏）
         foreach (var handle in handles)
         {
             await ActivateWindowAsync(handle);
-            await Task.Delay(50);
+            await Task.Delay(30); // 减少延迟
         }
     }
 

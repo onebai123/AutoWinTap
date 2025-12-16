@@ -42,6 +42,7 @@ import {
   LinkOutlined,
   CodeOutlined,
   DesktopOutlined,
+  ChromeOutlined,
 } from '@ant-design/icons'
 import Link from 'next/link'
 import type { Device } from '@/types'
@@ -622,6 +623,38 @@ export default function ControlPanelPage() {
                   disabled={device.status !== 'ONLINE' || executing}
                 >
                   端口列表
+                </Button>
+                <Button
+                  icon={<ChromeOutlined />}
+                  onClick={async () => {
+                    try {
+                      const res = await fetch(`/api/agents/${deviceId}/execute`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ 
+                          plugin: 'shell', 
+                          action: 'execute', 
+                          params: { 
+                            command: '$paths=@("C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe","C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe","D:\\software\\soft\\Google\\Chrome\\Application\\chrome.exe"); $p=$paths|Where-Object{Test-Path $_}|Select-Object -First 1; if($p){Start-Process $p -ArgumentList "--remote-debugging-port=9222","--user-data-dir=C:\\ChromeDebug"}else{Write-Error "Chrome not found"}',
+                            shell: 'powershell',
+                            timeout: 5000
+                          } 
+                        })
+                      })
+                      const data = await res.json()
+                      if (data.success) {
+                        message.success('✓ Chrome 调试模式已启动 (端口 9222)')
+                        addLog('success', 'Chrome 调试模式启动成功')
+                      } else {
+                        message.error(data.error || '启动失败')
+                      }
+                    } catch {
+                      message.error('启动失败')
+                    }
+                  }}
+                  disabled={device.status !== 'ONLINE' || executing}
+                >
+                  调试浏览器
                 </Button>
               </Space>
             </Card>
