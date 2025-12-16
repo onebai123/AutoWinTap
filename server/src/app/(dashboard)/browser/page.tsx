@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { Card, Tabs, Button, Space, Tag, Empty, message, Typography, List, Input, Select, Row, Col, Table, Modal, Badge, Tooltip, Alert, Switch, Statistic, Divider } from 'antd'
-import { ChromeOutlined, ReloadOutlined, LinkOutlined, CodeOutlined, ApiOutlined, PlayCircleOutlined, DisconnectOutlined, ClearOutlined, SearchOutlined, InfoCircleOutlined, SyncOutlined, AimOutlined, EyeOutlined, RobotOutlined, CopyOutlined, ExclamationCircleOutlined, WarningOutlined, CloseCircleOutlined } from '@ant-design/icons'
+import { ChromeOutlined, ReloadOutlined, LinkOutlined, CodeOutlined, ApiOutlined, PlayCircleOutlined, DisconnectOutlined, ClearOutlined, SearchOutlined, InfoCircleOutlined, SyncOutlined, AimOutlined, EyeOutlined, RobotOutlined, CopyOutlined, ExclamationCircleOutlined, WarningOutlined, CloseCircleOutlined, CameraOutlined, DownloadOutlined } from '@ant-design/icons'
 
 const { Text, Paragraph } = Typography
 const { TextArea } = Input
@@ -363,6 +363,50 @@ export default function BrowserDebugPage() {
     setAiModal(true)
   }
 
+  // 检测溢出元素
+  const detectOverflow = async () => {
+    if (!connectedPage) return
+    try {
+      const res = await fetch(`/api/agents/${selectedDevice}/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ plugin: 'browser-debug', action: 'detect-overflow', params: { pageId: connectedPage } }),
+      })
+      const data = await res.json()
+      if (data.success && Array.isArray(data.data)) {
+        setOverflowElements(data.data)
+        if (data.data.length === 0) {
+          message.success('未检测到溢出元素')
+        } else {
+          message.warning(`检测到 ${data.data.length} 个溢出元素`)
+        }
+      }
+    } catch {
+      message.error('检测失败')
+    }
+  }
+
+  // 截取页面
+  const capturePage = async () => {
+    if (!connectedPage) return
+    try {
+      const res = await fetch(`/api/agents/${selectedDevice}/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ plugin: 'browser-debug', action: 'capture-page', params: { pageId: connectedPage } }),
+      })
+      const data = await res.json()
+      if (data.success && data.data?.image) {
+        setPageScreenshot(data.data.image)
+        setScreenshotModal(true)
+      } else {
+        message.error('截图失败')
+      }
+    } catch {
+      message.error('截图失败')
+    }
+  }
+
   // 筛选日志
   const filteredLogs = consoleLogs.filter(log => {
     const logType = log.type || 'log'
@@ -591,6 +635,12 @@ export default function BrowserDebugPage() {
             <Col flex="auto" />
             <Col>
               <Space>
+                <Tooltip title="截取页面截图">
+                  <Button icon={<CameraOutlined />} onClick={capturePage}>截图</Button>
+                </Tooltip>
+                <Tooltip title="检测溢出元素">
+                  <Button icon={<ExclamationCircleOutlined />} onClick={detectOverflow}>溢出检测</Button>
+                </Tooltip>
                 <Tooltip title="AI 分析所有问题">
                   <Button 
                     icon={<RobotOutlined />} 
@@ -932,6 +982,84 @@ export default function BrowserDebugPage() {
         ) : (
           <Empty description="暂无分析结果" />
         )}
+      </Modal>
+
+      {/* 截图弹窗 */}
+      <Modal
+        title={<><CameraOutlined /> 页面截图</>}
+        open={screenshotModal}
+        onCancel={() => setScreenshotModal(false)}
+        footer={[
+          <Button key="download" icon={<DownloadOutlined />} onClick={() => {
+            if (pageScreenshot) {
+              const link = document.createElement('a')
+              link.href = `data:image/png;base64,${pageScreenshot}`
+              link.download = `screenshot-${Date.now()}.png`
+              link.click()
+              message.success('截图已下载')
+            }
+          }}>下载截图</Button>,
+          <Button key="analyze" icon={<RobotOutlined />} onClick={() => {
+            setScreenshotModal(false)
+            analyzeWithAI('all')
+          }}>AI 分析</Button>,
+          <Button key="close" onClick={() => setScreenshotModal(false)}>关闭</Button>
+        ]}
+        width={900}
+      >
+        {pageScreenshot ? (
+          <div style={{ textAlign: 'center', maxHeight: 600, overflow: 'auto' }}>
+            <img 
+              src={`data:image/png;base64,${pageScreenshot}`} 
+              alt="页面截图" 
+              style={{ maxWidth: '100%', border: '1px solid #d9d9d9', borderRadius: 4 }}
+            />
+          </div>
+        ) : (
+          <Empty description="暂无截图" />
+        )}
+      </Modal>
+
+      {/* 溢出检测结果弹窗 */}
+      <Modal
+        title={<><ExclamationCircleOutlined /> 溢出检测结果</>}
+        open={overflowElements.length > 0}
+        onCancel={() => setOverflowElements([])}
+        footer={<Button onClick={() => setOverflowElements([])}>关闭</Button>}
+        width={700}
+      >
+        <Alert 
+          message={`检测到 ${overflowElements.length} 个可能溢出的元素`}
+          type="warning"
+          style={{ marginBottom: 16 }}
+        />
+        <Table
+          size="small"
+          dataSource={overflowElements}
+          rowKey={(r, i) => `${r.tag}-${i}`}
+          pagination={false}
+          columns={[
+            { title: '元素', dataIndex: 'tag', width: 100, render: (tag: string, r) => (
+              <Tag color="orange">{tag}{r.id ? `#${r.id}` : ''}</Tag>
+            )},
+            { title: '尺寸', width: 150, render: (_, r) => (
+              <Text type="secondary" style={{ fontSize: 11 }}>
+                {r.clientWidth}×{r.clientHeight}
+              </Text>
+            )},
+            { title: '内容尺寸', width: 150, render: (_, r) => (
+              <Text type="danger" style={{ fontSize: 11 }}>
+                {r.scrollWidth}×{r.scrollHeight}
+              </Text>
+            )},
+            { title: '溢出', width: 100, render: (_, r) => (
+              <Space size={4}>
+                {r.scrollWidth > r.clientWidth && <Tag color="red">横向</Tag>}
+                {r.scrollHeight > r.clientHeight && <Tag color="red">纵向</Tag>}
+              </Space>
+            )},
+          ]}
+        />
       </Modal>
     </div>
   )
