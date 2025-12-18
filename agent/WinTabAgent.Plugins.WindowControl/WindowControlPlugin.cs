@@ -36,6 +36,21 @@ public class WindowControlPlugin : IWindowPlugin
     private static extern bool IsIconic(IntPtr hWnd); // 检查窗口是否最小化
 
     [DllImport("user32.dll")]
+    private static extern bool IsWindow(IntPtr hWnd); // 检查窗口是否存在
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    private static extern bool BringWindowToTop(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    private static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
+
+    [DllImport("kernel32.dll")]
+    private static extern uint GetCurrentThreadId();
+
+    [DllImport("user32.dll")]
     private static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
 
     [DllImport("user32.dll")]
@@ -67,6 +82,7 @@ public class WindowControlPlugin : IWindowPlugin
         public int Left, Top, Right, Bottom;
     }
 
+    private const int SW_SHOW = 5;
     private const int SW_MINIMIZE = 6;
     private const int SW_MAXIMIZE = 3;
     private const int SW_RESTORE = 9;
@@ -146,13 +162,14 @@ public class WindowControlPlugin : IWindowPlugin
             "list-ports" => await ExecuteListPortsAsync(),
             "kill-by-port" => ExecuteKillByPort(parameters),
             "open-url" => ExecuteOpenUrl(parameters),
+            "activate-by-pattern" => await ExecuteActivateByPatternAsync(parameters),
             _ => PluginResult.Fail($"Unknown action: {action}")
         };
     }
 
     public IEnumerable<string> GetSupportedActions()
     {
-        return new[] { "list", "list-processes", "activate", "minimize", "maximize", "capture", "capture-screen", "send-keys", "mouse-click", "switch-preset", "switch-desktop", "minimize-all", "restore-all", "tile-windows", "ocr", "ocr-screen", "list-ports", "kill-by-port", "open-url" };
+        return new[] { "list", "list-processes", "activate", "minimize", "maximize", "capture", "capture-screen", "send-keys", "mouse-click", "switch-preset", "switch-desktop", "minimize-all", "restore-all", "tile-windows", "ocr", "ocr-screen", "list-ports", "kill-by-port", "open-url", "activate-by-pattern" };
     }
 
     #endregion
@@ -207,12 +224,45 @@ public class WindowControlPlugin : IWindowPlugin
 
     public Task ActivateWindowAsync(IntPtr handle)
     {
-        // 只有最小化的窗口才恢复，保持最大化/全屏窗口的原始大小
+        // 检查窗口是否存在
+        if (!IsWindow(handle))
+        {
+            _context?.Log($"[WindowControl] ❌ 窗口 {handle} 不存在（已关闭或 handle 过期）", LogLevel.Warning);
+            return Task.CompletedTask;
+        }
+
+        // 获取窗口标题用于日志
+        var title = new StringBuilder(256);
+        GetWindowText(handle, title, 256);
+        _context?.Log($"[WindowControl] 激活窗口: {handle} - {title}");
+
+        // 只有最小化的窗口才恢复
         if (IsIconic(handle))
         {
+            _context?.Log($"[WindowControl] 窗口已最小化，正在恢复...");
             ShowWindow(handle, SW_RESTORE);
         }
-        SetForegroundWindow(handle);
+
+        // 绕过 Windows 前台窗口限制
+        var foreThread = GetWindowThreadProcessId(GetForegroundWindow(), out _);
+        var appThread = GetCurrentThreadId();
+        
+        bool attached = false;
+        if (foreThread != appThread)
+        {
+            attached = AttachThreadInput(foreThread, appThread, true);
+            BringWindowToTop(handle);
+            ShowWindow(handle, SW_SHOW);
+        }
+        
+        var result = SetForegroundWindow(handle);
+        _context?.Log($"[WindowControl] SetForegroundWindow: {(result ? "✓ 成功" : "✗ 失败")}");
+        
+        if (attached)
+        {
+            AttachThreadInput(foreThread, appThread, false);
+        }
+        
         return Task.CompletedTask;
     }
 
@@ -669,6 +719,72 @@ public class WindowControlPlugin : IWindowPlugin
     #endregion
 
     #region Port Management
+
+    /// <summary>
+    /// 按特征模式激活窗口（用于工作台热键）
+    /// </summary>
+    private async Task<PluginResult> ExecuteActivateByPatternAsync(JsonElement parameters)
+    {
+        if (!parameters.TryGetProperty("patterns", out var patternsProp))
+        {
+            return PluginResult.Fail("Missing 'patterns' parameter");
+        }
+
+        var windows = await GetWindowsAsync();
+        var matched = new List<object>();
+        var failed = new List<object>();
+
+        foreach (var pattern in patternsProp.EnumerateArray())
+        {
+            var processName = pattern.TryGetProperty("processName", out var pn) ? pn.GetString() : null;
+            var titlePattern = pattern.TryGetProperty("titlePattern", out var tp) ? tp.GetString() : null;
+            var fallbackHandle = pattern.TryGetProperty("handle", out var h) ? h.GetInt64() : 0;
+
+            // 1. 先尝试按特征匹配
+            WindowInfo? matchedWindow = null;
+            
+            if (!string.IsNullOrEmpty(processName))
+            {
+                // 按进程名匹配
+                matchedWindow = windows.FirstOrDefault(w => 
+                    w.ProcessName.Equals(processName, StringComparison.OrdinalIgnoreCase));
+                
+                // 如果有标题模式，进一步筛选
+                if (matchedWindow != null && !string.IsNullOrEmpty(titlePattern))
+                {
+                    matchedWindow = windows.FirstOrDefault(w =>
+                        w.ProcessName.Equals(processName, StringComparison.OrdinalIgnoreCase) &&
+                        w.Title.Contains(titlePattern, StringComparison.OrdinalIgnoreCase));
+                }
+            }
+            
+            // 2. 如果特征匹配失败，尝试用备用 handle
+            if (matchedWindow == null && fallbackHandle != 0)
+            {
+                matchedWindow = windows.FirstOrDefault(w => w.Handle.ToInt64() == fallbackHandle);
+            }
+
+            // 3. 激活匹配到的窗口
+            if (matchedWindow != null)
+            {
+                await ActivateWindowAsync(matchedWindow.Handle);
+                matched.Add(new { 
+                    handle = matchedWindow.Handle.ToInt64(), 
+                    title = matchedWindow.Title,
+                    processName = matchedWindow.ProcessName
+                });
+                await Task.Delay(50);
+            }
+            else
+            {
+                failed.Add(new { processName, titlePattern, handle = fallbackHandle });
+            }
+        }
+
+        _context?.Log($"[activate-by-pattern] Matched: {matched.Count}, Failed: {failed.Count}");
+        
+        return PluginResult.Ok(new { matched, failed });
+    }
 
     /// <summary>
     /// 获取所有监听端口列表

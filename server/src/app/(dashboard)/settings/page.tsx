@@ -1,16 +1,99 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Card, Form, Input, InputNumber, Switch, Button, Divider, message, Spin, Row, Col, Alert, Typography } from 'antd'
-import { SaveOutlined, ReloadOutlined, RobotOutlined, EyeOutlined, EyeInvisibleOutlined } from '@ant-design/icons'
+import { Card, Form, Input, InputNumber, Switch, Button, Divider, message, Spin, Row, Col, Alert, Typography, Select, Tag, Space, List, Popconfirm } from 'antd'
+import { SaveOutlined, ReloadOutlined, RobotOutlined, EyeOutlined, EyeInvisibleOutlined, PlusOutlined, DeleteOutlined, StarOutlined } from '@ant-design/icons'
+import { CAPABILITY_LABELS, PROVIDER_PRESETS, type ModelCapability } from '@/lib/advanced-model'
 
 const { Text } = Typography
 
+interface AdvancedModelConfig {
+  id: string
+  name: string
+  provider: string
+  apiKey: string
+  baseUrl: string
+  model: string
+  capabilities: ModelCapability[]
+  isDefault: boolean
+}
+
 export default function SettingsPage() {
   const [form] = Form.useForm()
+  const [advancedForm] = Form.useForm()
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [showApiKey, setShowApiKey] = useState(false)
+  
+  // 高级模型
+  const [advancedModels, setAdvancedModels] = useState<AdvancedModelConfig[]>([])
+  const [showAdvancedForm, setShowAdvancedForm] = useState(false)
+  const [savingAdvanced, setSavingAdvanced] = useState(false)
+
+  // 加载高级模型
+  const loadAdvancedModels = async () => {
+    try {
+      const res = await fetch('/api/models/advanced')
+      const data = await res.json()
+      if (data.success) {
+        setAdvancedModels(data.data || [])
+      }
+    } catch (error) {
+      console.error('Load advanced models error:', error)
+    }
+  }
+
+  // 保存高级模型
+  const saveAdvancedModel = async (values: Record<string, unknown>) => {
+    setSavingAdvanced(true)
+    try {
+      const res = await fetch('/api/models/advanced', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(values),
+      })
+      const data = await res.json()
+      if (data.success) {
+        message.success('✓ 模型已保存')
+        loadAdvancedModels()
+        setShowAdvancedForm(false)
+        advancedForm.resetFields()
+      } else {
+        message.error(data.error || '保存失败')
+      }
+    } catch {
+      message.error('保存失败')
+    }
+    setSavingAdvanced(false)
+  }
+
+  // 删除高级模型
+  const deleteAdvancedModel = async (id: string) => {
+    try {
+      const res = await fetch(`/api/models/advanced?id=${id}`, { method: 'DELETE' })
+      const data = await res.json()
+      if (data.success) {
+        message.success('已删除')
+        loadAdvancedModels()
+      }
+    } catch {
+      message.error('删除失败')
+    }
+  }
+
+  // 设为默认
+  const setDefaultModel = async (id: string) => {
+    try {
+      const res = await fetch(`/api/models/advanced/${id}/default`, { method: 'POST' })
+      const data = await res.json()
+      if (data.success) {
+        message.success('已设为默认')
+        loadAdvancedModels()
+      }
+    } catch {
+      message.error('设置失败')
+    }
+  }
 
   // 加载设置
   const loadSettings = async () => {
@@ -34,7 +117,10 @@ export default function SettingsPage() {
     setLoading(false)
   }
 
-  useEffect(() => { loadSettings() }, [])
+  useEffect(() => { 
+    loadSettings()
+    loadAdvancedModels()
+  }, [])
 
   const onFinish = async (values: Record<string, unknown>) => {
     setSaving(true)
@@ -192,6 +278,151 @@ export default function SettingsPage() {
               </Button>
             </Form.Item>
           </Form>
+        </Card>
+
+        {/* 高级模型配置 */}
+        <Card 
+          title={<><StarOutlined style={{ color: '#faad14' }} /> 高级模型配置</>}
+          extra={
+            <Button 
+              type="primary" 
+              icon={<PlusOutlined />}
+              onClick={() => setShowAdvancedForm(true)}
+            >
+              添加模型
+            </Button>
+          }
+          style={{ marginTop: 16 }}
+        >
+          <Alert 
+            message="高级模型用于 AI 监管功能，支持复杂推理和任务规划" 
+            type="info" 
+            showIcon 
+            style={{ marginBottom: 16 }}
+          />
+
+          {/* 模型列表 */}
+          <List
+            dataSource={advancedModels}
+            locale={{ emptyText: '暂无高级模型，点击"添加模型"配置' }}
+            renderItem={(model) => (
+              <List.Item
+                actions={[
+                  !model.isDefault && (
+                    <Button 
+                      size="small" 
+                      icon={<StarOutlined />}
+                      onClick={() => setDefaultModel(model.id)}
+                    >
+                      设为默认
+                    </Button>
+                  ),
+                  <Popconfirm
+                    key="delete"
+                    title="确定删除此模型？"
+                    onConfirm={() => deleteAdvancedModel(model.id)}
+                  >
+                    <Button size="small" danger icon={<DeleteOutlined />} />
+                  </Popconfirm>,
+                ].filter(Boolean)}
+              >
+                <List.Item.Meta
+                  title={
+                    <Space>
+                      <span>{model.name}</span>
+                      {model.isDefault && <Tag color="gold">默认</Tag>}
+                      <Tag>{model.provider}</Tag>
+                    </Space>
+                  }
+                  description={
+                    <Space>
+                      <Text type="secondary">{model.model}</Text>
+                      {model.capabilities?.map(c => (
+                        <Tag key={c} color={CAPABILITY_LABELS[c]?.color}>
+                          {CAPABILITY_LABELS[c]?.icon} {CAPABILITY_LABELS[c]?.label}
+                        </Tag>
+                      ))}
+                    </Space>
+                  }
+                />
+              </List.Item>
+            )}
+          />
+
+          {/* 添加模型表单 */}
+          {showAdvancedForm && (
+            <Card size="small" style={{ marginTop: 16 }} title="添加高级模型">
+              <Form
+                form={advancedForm}
+                layout="vertical"
+                onFinish={saveAdvancedModel}
+                initialValues={{ provider: 'deepseek', capabilities: ['reasoning', 'coding'] }}
+              >
+                <Row gutter={16}>
+                  <Col span={12}>
+                    <Form.Item label="模型名称" name="name" rules={[{ required: true }]}>
+                      <Input placeholder="如：DeepSeek R1" />
+                    </Form.Item>
+                  </Col>
+                  <Col span={12}>
+                    <Form.Item label="提供商" name="provider" rules={[{ required: true }]}>
+                      <Select
+                        options={Object.entries(PROVIDER_PRESETS).map(([k, v]) => ({
+                          label: v.name,
+                          value: k,
+                        }))}
+                        onChange={(v) => {
+                          const preset = PROVIDER_PRESETS[v]
+                          if (preset) {
+                            advancedForm.setFieldsValue({
+                              baseUrl: preset.baseUrl,
+                              model: preset.models[0],
+                            })
+                          }
+                        }}
+                      />
+                    </Form.Item>
+                  </Col>
+                </Row>
+
+                <Form.Item label="API 地址" name="baseUrl" rules={[{ required: true }]}>
+                  <Input placeholder="https://api.deepseek.com/v1" />
+                </Form.Item>
+
+                <Form.Item label="API 密钥" name="apiKey" rules={[{ required: true }]}>
+                  <Input.Password placeholder="sk-..." />
+                </Form.Item>
+
+                <Row gutter={16}>
+                  <Col span={12}>
+                    <Form.Item label="模型名称" name="model" rules={[{ required: true }]}>
+                      <Input placeholder="deepseek-reasoner" />
+                    </Form.Item>
+                  </Col>
+                  <Col span={12}>
+                    <Form.Item label="能力标签" name="capabilities">
+                      <Select
+                        mode="multiple"
+                        options={Object.entries(CAPABILITY_LABELS).map(([k, v]) => ({
+                          label: `${v.icon} ${v.label}`,
+                          value: k,
+                        }))}
+                      />
+                    </Form.Item>
+                  </Col>
+                </Row>
+
+                <Form.Item>
+                  <Space>
+                    <Button type="primary" htmlType="submit" loading={savingAdvanced}>
+                      保存
+                    </Button>
+                    <Button onClick={() => setShowAdvancedForm(false)}>取消</Button>
+                  </Space>
+                </Form.Item>
+              </Form>
+            </Card>
+          )}
         </Card>
       </Col>
     </Row>

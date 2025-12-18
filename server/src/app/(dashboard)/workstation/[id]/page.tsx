@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { Card, Row, Col, Button, Space, Tag, message, Spin, Empty, Modal, Form, Select, Input, Typography, Image, Divider, Switch, Segmented, Tooltip } from 'antd'
-import { ArrowLeftOutlined, ReloadOutlined, PlusOutlined, DeleteOutlined, PlayCircleOutlined, FileTextOutlined, RobotOutlined, SettingOutlined, SendOutlined, CameraOutlined, AppstoreOutlined, BlockOutlined, BorderOutlined, LoadingOutlined, EditOutlined, CheckOutlined, ExpandOutlined, MinusOutlined, FullscreenOutlined, CopyOutlined } from '@ant-design/icons'
+import { ArrowLeftOutlined, ReloadOutlined, PlusOutlined, DeleteOutlined, PlayCircleOutlined, FileTextOutlined, RobotOutlined, SettingOutlined, SendOutlined, CameraOutlined, AppstoreOutlined, BlockOutlined, BorderOutlined, LoadingOutlined, EditOutlined, CheckOutlined, ExpandOutlined, MinusOutlined, FullscreenOutlined, CopyOutlined, ExclamationCircleOutlined, LinkOutlined, SyncOutlined } from '@ant-design/icons'
 import Link from 'next/link'
 
 const { Text, Title } = Typography
@@ -93,6 +93,23 @@ interface WindowInfo {
   handle: number
   title: string
   processName: string
+  className?: string
+}
+
+// 失效检查结果
+interface CheckResult {
+  window: WindowConfig
+  status: 'valid' | 'invalid'
+  candidates: {
+    window: WindowInfo
+    matchScore: number
+    matchReason: string
+  }[]
+  aiSuggestion?: {
+    handle: number
+    confidence: number
+    reason: string
+  }
 }
 
 export default function WorkstationDetailPage() {
@@ -112,6 +129,12 @@ export default function WorkstationDetailPage() {
   const [addWindowOpen, setAddWindowOpen] = useState(false)
   const [availableWindows, setAvailableWindows] = useState<WindowInfo[]>([])
   const [windowForm] = Form.useForm()
+  
+  // 失效检查
+  const [checkOpen, setCheckOpen] = useState(false)
+  const [checkLoading, setCheckLoading] = useState(false)
+  const [checkResults, setCheckResults] = useState<CheckResult[]>([])
+  const [selectedMatches, setSelectedMatches] = useState<Record<number, number>>({}) // oldHandle -> newHandle
   
   // 命令目标
   const [commandTarget, setCommandTarget] = useState<string>('terminal')
@@ -638,6 +661,116 @@ export default function WorkstationDetailPage() {
     } catch {}
   }
 
+  // 检查窗口有效性
+  const checkWindowValidity = async (useAI = false) => {
+    if (!workstation) return
+    setCheckLoading(true)
+    setCheckResults([])
+    setSelectedMatches({})
+    
+    try {
+      // 先获取当前所有窗口
+      const listRes = await fetch(`/api/agents/${workstation.deviceId}/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ plugin: 'window-control', action: 'list' }),
+      })
+      const listData = await listRes.json()
+      
+      if (!listData.success || !Array.isArray(listData.data)) {
+        message.error('无法获取窗口列表')
+        setCheckLoading(false)
+        return
+      }
+      
+      const currentWindows = listData.data.filter((w: WindowInfo) => 
+        w.title && !w.title.includes('Program Manager')
+      )
+      
+      // 调用检查 API
+      const checkRes = await fetch(`/api/workstation/${id}/check`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ currentWindows, useAI }),
+      })
+      const checkData = await checkRes.json()
+      
+      if (checkData.success) {
+        setCheckResults(checkData.data.results)
+        setAvailableWindows(currentWindows)
+        
+        // 自动选择 AI 建议或最佳匹配
+        const autoMatches: Record<number, number> = {}
+        for (const result of checkData.data.results) {
+          if (result.status === 'invalid') {
+            if (result.aiSuggestion) {
+              autoMatches[result.window.handle] = result.aiSuggestion.handle
+            } else if (result.candidates.length > 0 && result.candidates[0].matchScore >= 60) {
+              autoMatches[result.window.handle] = result.candidates[0].window.handle
+            }
+          }
+        }
+        setSelectedMatches(autoMatches)
+        
+        const summary = checkData.data.summary
+        if (summary.invalid === 0) {
+          message.success(`✅ 所有 ${summary.total} 个窗口都有效`)
+        } else {
+          message.warning(`⚠️ ${summary.invalid}/${summary.total} 个窗口已失效`)
+          setCheckOpen(true)
+        }
+      }
+    } catch (e) {
+      message.error('检查失败')
+    }
+    setCheckLoading(false)
+  }
+
+  // 应用窗口重新关联
+  const applyWindowRemapping = async () => {
+    if (!workstation) return
+    
+    const invalidResults = checkResults.filter(r => r.status === 'invalid')
+    const remappedCount = Object.keys(selectedMatches).length
+    
+    if (remappedCount === 0) {
+      message.warning('请先选择要关联的窗口')
+      return
+    }
+    
+    // 更新窗口配置
+    const updatedWindows = (workstation.windows as WindowConfig[]).map(w => {
+      const newHandle = selectedMatches[w.handle]
+      if (newHandle) {
+        // 找到新窗口的标题
+        const newWindow = availableWindows.find(aw => aw.handle === newHandle)
+        return {
+          ...w,
+          handle: newHandle,
+          name: newWindow?.title || w.name,
+          processName: newWindow?.processName,
+        }
+      }
+      return w
+    })
+    
+    try {
+      const res = await fetch(`/api/workstation/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...workstation, windows: updatedWindows }),
+      })
+      const data = await res.json()
+      if (data.success) {
+        message.success(`✅ 已重新关联 ${remappedCount} 个窗口`)
+        setCheckOpen(false)
+        loadWorkstation()
+      }
+    } catch {
+      message.error('更新失败')
+    }
+  }
+
   if (loading) {
     return <Card><Spin tip="加载中..." /></Card>
   }
@@ -693,6 +826,23 @@ export default function WorkstationDetailPage() {
                 <Text strong>监控窗口 ({windowStates.length})</Text>
                 <Button size="small" icon={<PlusOutlined />} onClick={() => { loadAvailableWindows(); setAddWindowOpen(true) }}>
                   添加
+                </Button>
+                <Button 
+                  size="small" 
+                  icon={checkLoading ? <LoadingOutlined /> : <SyncOutlined />} 
+                  onClick={() => checkWindowValidity(false)}
+                  loading={checkLoading}
+                >
+                  失效检查
+                </Button>
+                <Button 
+                  size="small" 
+                  type="primary"
+                  icon={checkLoading ? <LoadingOutlined /> : <RobotOutlined />} 
+                  onClick={() => checkWindowValidity(true)}
+                  loading={checkLoading}
+                >
+                  AI 智能关联
                 </Button>
               </Space>
               <Space>
@@ -1121,6 +1271,121 @@ export default function WorkstationDetailPage() {
             />
           </Form.Item>
         </Form>
+      </Modal>
+
+      {/* 失效检查弹窗 */}
+      <Modal
+        title={<><ExclamationCircleOutlined style={{ color: '#faad14' }} /> 窗口失效检查</>}
+        open={checkOpen}
+        onCancel={() => setCheckOpen(false)}
+        width={700}
+        footer={[
+          <Button key="cancel" onClick={() => setCheckOpen(false)}>取消</Button>,
+          <Button 
+            key="apply" 
+            type="primary" 
+            icon={<LinkOutlined />}
+            onClick={applyWindowRemapping}
+            disabled={Object.keys(selectedMatches).length === 0}
+          >
+            应用关联 ({Object.keys(selectedMatches).length})
+          </Button>,
+        ]}
+      >
+        <div style={{ marginBottom: 16 }}>
+          <Text type="secondary">
+            电脑重启后窗口句柄会变化，请选择正确的窗口重新关联。
+            {checkResults.some(r => r.aiSuggestion) && (
+              <Tag color="blue" style={{ marginLeft: 8 }}>🤖 AI 已推荐最佳匹配</Tag>
+            )}
+          </Text>
+        </div>
+        
+        {checkResults.filter(r => r.status === 'invalid').length === 0 ? (
+          <Empty description="所有窗口都有效 ✅" />
+        ) : (
+          <div style={{ maxHeight: 400, overflow: 'auto' }}>
+            {checkResults.filter(r => r.status === 'invalid').map((result, idx) => (
+              <Card 
+                key={idx} 
+                size="small" 
+                style={{ marginBottom: 12 }}
+                title={
+                  <Space>
+                    <Tag color="orange">失效</Tag>
+                    <Text strong>{result.window.name}</Text>
+                    <Tag>{result.window.role}</Tag>
+                  </Space>
+                }
+              >
+                {result.aiSuggestion && (
+                  <div style={{ 
+                    marginBottom: 12, 
+                    padding: '8px 12px', 
+                    background: '#e6f7ff', 
+                    borderRadius: 4,
+                    border: '1px solid #91d5ff'
+                  }}>
+                    <Space>
+                      <RobotOutlined style={{ color: '#1890ff' }} />
+                      <Text strong>AI 推荐：</Text>
+                      <Text>{availableWindows.find(w => w.handle === result.aiSuggestion?.handle)?.title}</Text>
+                      <Tag color="blue">{Math.round((result.aiSuggestion.confidence || 0) * 100)}% 置信度</Tag>
+                    </Space>
+                    <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>
+                      {result.aiSuggestion.reason}
+                    </div>
+                  </div>
+                )}
+                
+                <Text type="secondary" style={{ fontSize: 12 }}>选择要关联的窗口：</Text>
+                <Select
+                  style={{ width: '100%', marginTop: 8 }}
+                  placeholder="选择窗口..."
+                  value={selectedMatches[result.window.handle]}
+                  onChange={(v) => setSelectedMatches(prev => ({ ...prev, [result.window.handle]: v }))}
+                  allowClear
+                  onClear={() => setSelectedMatches(prev => {
+                    const newMatches = { ...prev }
+                    delete newMatches[result.window.handle]
+                    return newMatches
+                  })}
+                >
+                  {result.candidates.length > 0 ? (
+                    <>
+                      <Select.OptGroup label="🎯 推荐匹配">
+                        {result.candidates.map(c => (
+                          <Select.Option key={c.window.handle} value={c.window.handle}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <span>{c.window.processName}: {c.window.title.substring(0, 35)}</span>
+                              <Tag color={c.matchScore >= 80 ? 'green' : c.matchScore >= 50 ? 'orange' : 'default'}>
+                                {c.matchScore}分
+                              </Tag>
+                            </div>
+                            <div style={{ fontSize: 11, color: '#999' }}>{c.matchReason}</div>
+                          </Select.Option>
+                        ))}
+                      </Select.OptGroup>
+                      <Select.OptGroup label="📋 所有窗口">
+                        {availableWindows.filter(w => !result.candidates.some(c => c.window.handle === w.handle)).map(w => (
+                          <Select.Option key={w.handle} value={w.handle}>
+                            {w.processName}: {w.title.substring(0, 40)}
+                          </Select.Option>
+                        ))}
+                      </Select.OptGroup>
+                    </>
+                  ) : (
+                    availableWindows.map(w => (
+                      <Select.Option key={w.handle} value={w.handle}>
+                        {w.processName}: {w.title.substring(0, 40)}
+                      </Select.Option>
+                    ))
+                  )}
+                </Select>
+              </Card>
+            ))}
+          </div>
+        )}
       </Modal>
     </div>
   )

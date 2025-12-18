@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { Card, Row, Col, Button, Empty, Modal, Form, Input, Select, Space, Tag, message, Typography, Alert, Spin } from 'antd'
-import { PlusOutlined, DesktopOutlined, DeleteOutlined, PlayCircleOutlined, ReloadOutlined, RocketOutlined, CodeOutlined, ChromeOutlined, ConsoleSqlOutlined } from '@ant-design/icons'
+import { PlusOutlined, DesktopOutlined, DeleteOutlined, PlayCircleOutlined, ReloadOutlined, RocketOutlined, CodeOutlined, ChromeOutlined, ConsoleSqlOutlined, ThunderboltOutlined, AppstoreOutlined } from '@ant-design/icons'
 import Link from 'next/link'
 
 const { Text } = Typography
@@ -24,6 +24,8 @@ interface WindowConfig {
   handle: number
   role: 'browser' | 'editor' | 'terminal' | 'other'
   name: string
+  processName?: string   // 进程名，用于重启后匹配
+  titlePattern?: string  // 标题模式，用于重启后匹配
 }
 
 interface CommandConfig {
@@ -36,6 +38,7 @@ interface Workstation {
   id: string
   name: string
   deviceId: string
+  presetId: string | null  // 关联的窗口编排
   windows: WindowConfig[]
   commands: CommandConfig[]
   createdAt: string
@@ -83,6 +86,7 @@ const defaultCommands: CommandConfig[] = [
 interface Preset {
   id: string
   name: string
+  hotkey?: string
   deviceId: string
   windows: { handle: number; title: string; processName: string }[]
 }
@@ -98,6 +102,11 @@ export default function WorkstationListPage() {
   // 选择预设
   const [selectedDevice, setSelectedDevice] = useState<string>('')
   const [selectedPreset, setSelectedPreset] = useState<string>('')
+  
+  // 切换弹窗
+  const [switchModalOpen, setSwitchModalOpen] = useState(false)
+  const [switchingWs, setSwitchingWs] = useState<Workstation | null>(null)
+  const [switchPresetId, setSwitchPresetId] = useState<string>('')
 
   // 加载工作台列表
   const loadWorkstations = async () => {
@@ -164,6 +173,8 @@ export default function WorkstationListPage() {
       handle: w.handle,
       name: w.title,
       role: detectWindowRole(w.processName, w.title),
+      processName: w.processName,
+      titlePattern: w.title,
     }))
     
     try {
@@ -173,6 +184,7 @@ export default function WorkstationListPage() {
         body: JSON.stringify({
           name,
           deviceId: preset.deviceId,
+          presetId: preset.id,  // 关联预设，切换时使用
           windows,
           commands: defaultCommands,
         }),
@@ -218,10 +230,74 @@ export default function WorkstationListPage() {
     })
   }
 
+  // 切换工作台
+  const handleSwitch = (ws: Workstation) => {
+    // 如果有关联的预设，直接切换
+    const preset = ws.presetId ? presets.find(p => p.id === ws.presetId) : null
+    if (preset) {
+      doSwitch(ws, preset)
+    } else {
+      // 没有关联预设，弹窗让用户选择
+      setSwitchingWs(ws)
+      setSwitchPresetId('')
+      setSwitchModalOpen(true)
+    }
+  }
+
+  // 执行切换
+  const doSwitch = async (ws: Workstation, preset: Preset) => {
+    const device = devices.find(d => d.id === ws.deviceId)
+    if (!device || device.status !== 'ONLINE') {
+      message.error('设备不在线')
+      return
+    }
+    
+    const handles = preset.windows.map(w => w.handle)
+    try {
+      const res = await fetch(`/api/agents/${ws.deviceId}/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          plugin: 'window-control',
+          action: 'switch-preset',
+          params: { handles }
+        }),
+      })
+      const data = await res.json()
+      if (data.success) {
+        message.success(`✓ 已切换到「${ws.name}」`)
+        setSwitchModalOpen(false)
+      } else {
+        message.error(data.error || '切换失败')
+      }
+    } catch {
+      message.error('切换失败')
+    }
+  }
+
+  // 确认切换
+  const handleSwitchConfirm = () => {
+    if (!switchingWs || !switchPresetId) {
+      message.warning('请选择窗口编排')
+      return
+    }
+    const preset = presets.find(p => p.id === switchPresetId)
+    if (preset) {
+      doSwitch(switchingWs, preset)
+    }
+  }
+
   // 获取设备名称
   const getDeviceName = (deviceId: string) => {
     const device = devices.find(d => d.id === deviceId)
     return device ? `${device.hostname} (${device.ip})` : deviceId
+  }
+
+  // 获取关联预设名称
+  const getPresetName = (presetId: string | null) => {
+    if (!presetId) return null
+    const preset = presets.find(p => p.id === presetId)
+    return preset?.name || null
   }
 
   if (loading) {
@@ -253,12 +329,15 @@ export default function WorkstationListPage() {
                   size="small"
                   hoverable
                   actions={[
+                    <span key="switch" style={{ color: '#1890ff' }} onClick={(e) => { e.stopPropagation(); handleSwitch(ws) }}>
+                      <Space><ThunderboltOutlined /> 切换</Space>
+                    </span>,
                     <Link key="open" href={`/workstation/${ws.id}`}>
-                      <Button type="link" icon={<PlayCircleOutlined />}>进入</Button>
+                      <Space><PlayCircleOutlined /> 进入</Space>
                     </Link>,
-                    <Button key="delete" type="link" danger icon={<DeleteOutlined />} onClick={() => handleDelete(ws.id)}>
-                      删除
-                    </Button>,
+                    <span key="delete" style={{ color: '#ff4d4f' }} onClick={(e) => { e.stopPropagation(); handleDelete(ws.id) }}>
+                      <Space><DeleteOutlined /> 删除</Space>
+                    </span>,
                   ]}
                 >
                   <Card.Meta
@@ -267,6 +346,9 @@ export default function WorkstationListPage() {
                       <div>
                         <Text type="secondary">{getDeviceName(ws.deviceId)}</Text>
                         <div style={{ marginTop: 8 }}>
+                          {getPresetName(ws.presetId) && (
+                            <Tag color="purple" icon={<AppstoreOutlined />}>{getPresetName(ws.presetId)}</Tag>
+                          )}
                           <Tag color="blue">{(ws.windows as WindowConfig[]).length} 窗口</Tag>
                           <Tag color="green">{(ws.commands as CommandConfig[]).length} 命令</Tag>
                         </div>
@@ -358,6 +440,33 @@ export default function WorkstationListPage() {
             showIcon
           />
         )}
+      </Modal>
+
+      {/* 切换窗口编排弹窗 */}
+      <Modal
+        title={<><ThunderboltOutlined /> 选择窗口编排</>}
+        open={switchModalOpen}
+        onCancel={() => setSwitchModalOpen(false)}
+        onOk={handleSwitchConfirm}
+        okText="切换"
+        width={400}
+      >
+        <Alert 
+          message={`为「${switchingWs?.name}」选择要切换的窗口编排`}
+          type="info"
+          showIcon
+          style={{ marginBottom: 16 }}
+        />
+        <Select
+          placeholder="选择窗口编排"
+          value={switchPresetId || undefined}
+          onChange={setSwitchPresetId}
+          style={{ width: '100%' }}
+          options={presets.map(p => ({
+            label: `${p.name} (${p.windows.length} 窗口)${p.hotkey ? ` [${p.hotkey}]` : ''}`,
+            value: p.id,
+          }))}
+        />
       </Modal>
     </div>
   )

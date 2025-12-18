@@ -74,10 +74,56 @@ model Workstation {
   id        String   @id @default(uuid())
   name      String
   deviceId  String
+  presetId  String?  // 关联的窗口编排（切换时使用）
   windows   String   @default("[]") // JSON string: WindowConfig[]
   commands  String   @default("[]") // JSON string: CommandConfig[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// IDE 定位点
+model IdeLocation {
+  id          String   @id @default(uuid())
+  name        String   // 显示名称 "输入框"
+  x           Int      // X 坐标
+  y           Int      // Y 坐标
+  target      String   @default("windsurf") // 目标应用
+  description String?  // 描述
+  screenshot  String?  // 截图参考 (base64)
+  tags        String   @default("[]") // JSON array
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// IDE 操作预设
+model IdePreset {
+  id          String   @id @default(uuid())
+  name        String   // "发送任务"
+  category    String   @default("windsurf") // windsurf | vscode | common
+  icon        String?  // 图标
+  hotkey      String?  // 快捷触发 "ctrl+alt+t"
+  steps       String   @default("[]") // JSON array of Step
+  variables   String   @default("{}") // JSON object
+  description String?
+  usageCount  Int      @default(0)
+  successCount Int     @default(0)
+  isBuiltin   Boolean  @default(false) // 内置预设
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// IDE 执行记录
+model IdeExecutionLog {
+  id         String   @id @default(uuid())
+  presetId   String?
+  presetName String?
+  steps      String   @default("[]") // JSON array
+  results    String   @default("[]") // JSON array
+  success    Boolean  @default(false)
+  error      String?
+  screenshot String?  // 失败截图
+  duration   Int      @default(0) // 毫秒
+  createdAt  DateTime @default(now())
 }
 
 // Status: ONLINE | OFFLINE

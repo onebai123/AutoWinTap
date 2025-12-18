@@ -75,6 +75,7 @@ public class BrowserDebugPlugin : IBrowserPlugin
             "highlight-element" => await ExecuteHighlightElementAsync(parameters),
             "detect-overflow" => await ExecuteDetectOverflowAsync(parameters),
             "capture-page" => await ExecuteCapturePageAsync(parameters),
+            "get-response-body" => await ExecuteGetResponseBodyAsync(parameters),
             _ => PluginResult.Fail($"Unknown action: {action}")
         };
     }
@@ -304,12 +305,14 @@ public class BrowserDebugPlugin : IBrowserPlugin
                 else if (methodName == "Network.requestWillBeSent" && _networkRequests.ContainsKey(pageId))
                 {
                     var request = root.GetProperty("params").GetProperty("request");
+                    var reqBody = request.TryGetProperty("postData", out var pd) ? pd.GetString() : null;
                     _networkRequests[pageId].Add(new NetworkRequest
                     {
                         RequestId = root.GetProperty("params").GetProperty("requestId").GetString() ?? "",
                         Url = request.GetProperty("url").GetString() ?? "",
                         Method = request.GetProperty("method").GetString() ?? "",
-                        Type = root.GetProperty("params").TryGetProperty("type", out var t) ? t.GetString() ?? "" : ""
+                        Type = root.GetProperty("params").TryGetProperty("type", out var t) ? t.GetString() ?? "" : "",
+                        RequestBody = reqBody
                     });
                 }
             }
@@ -718,6 +721,50 @@ public class BrowserDebugPlugin : IBrowserPlugin
         catch { }
 
         return PluginResult.Fail("Failed to capture page");
+    }
+
+    private async Task<PluginResult> ExecuteGetResponseBodyAsync(JsonElement parameters)
+    {
+        if (!parameters.TryGetProperty("pageId", out var pageIdProp))
+        {
+            return PluginResult.Fail("Missing 'pageId' parameter");
+        }
+        if (!parameters.TryGetProperty("requestId", out var requestIdProp))
+        {
+            return PluginResult.Fail("Missing 'requestId' parameter");
+        }
+
+        var pageId = pageIdProp.GetString()!;
+        var requestId = requestIdProp.GetString()!;
+
+        if (!_connections.TryGetValue(pageId, out var ws))
+        {
+            return PluginResult.Fail($"Not connected to page: {pageId}");
+        }
+
+        try
+        {
+            var result = await SendCommandAsync(ws, "Network.getResponseBody", new { requestId });
+            var json = JsonDocument.Parse(result);
+            
+            if (json.RootElement.TryGetProperty("result", out var res))
+            {
+                var body = res.TryGetProperty("body", out var b) ? b.GetString() : null;
+                var base64Encoded = res.TryGetProperty("base64Encoded", out var e) && e.GetBoolean();
+                
+                return PluginResult.Ok(new { body, base64Encoded });
+            }
+            if (json.RootElement.TryGetProperty("error", out var err))
+            {
+                return PluginResult.Fail(err.TryGetProperty("message", out var m) ? m.GetString() : "Failed");
+            }
+        }
+        catch (Exception ex)
+        {
+            return PluginResult.Fail($"Error: {ex.Message}");
+        }
+
+        return PluginResult.Fail("Failed to get response body");
     }
 
     #endregion

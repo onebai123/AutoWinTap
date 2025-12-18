@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Windsurf 自动化测试</title>
+    <style>
+        * { box-sizing: border-box; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 900px; 
+            margin: 0 auto; 
+            padding: 20px;
+            background: #1a1a2e;
+            color: #eee;
+        }
+        h1 { color: #00d4aa; margin-bottom: 10px; }
+        .subtitle { color: #888; margin-bottom: 20px; }
+        .card { 
+            background: #16213e; 
+            border-radius: 12px; 
+            padding: 20px; 
+            margin-bottom: 16px;
+            border: 1px solid #0f3460;
+        }
+        .card h3 { margin-top: 0; color: #00d4aa; }
+        .row { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+        input, textarea { 
+            padding: 10px; 
+            border-radius: 6px; 
+            border: 1px solid #0f3460;
+            background: #0f3460;
+            color: #fff;
+            font-size: 14px;
+        }
+        input:focus, textarea:focus { outline: 2px solid #00d4aa; }
+        input[type="number"] { width: 100px; }
+        textarea { width: 100%; min-height: 80px; resize: vertical; }
+        button { 
+            padding: 10px 20px; 
+            border-radius: 6px; 
+            border: none;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+        .btn-primary { background: #00d4aa; color: #000; }
+        .btn-primary:hover { background: #00b894; }
+        .btn-secondary { background: #0f3460; color: #fff; }
+        .btn-secondary:hover { background: #1a4a7a; }
+        .btn-danger { background: #e74c3c; color: #fff; }
+        .status { 
+            padding: 8px 12px; 
+            border-radius: 6px; 
+            font-size: 13px;
+            margin-top: 10px;
+        }
+        .status.success { background: #00d4aa22; color: #00d4aa; }
+        .status.error { background: #e74c3c22; color: #e74c3c; }
+        .status.info { background: #3498db22; color: #3498db; }
+        #log { 
+            background: #0a0a15; 
+            padding: 15px; 
+            border-radius: 8px;
+            font-family: monospace;
+            font-size: 13px;
+            max-height: 300px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+        }
+        .log-entry { margin: 5px 0; padding: 5px; border-radius: 4px; }
+        .log-success { background: #00d4aa15; }
+        .log-error { background: #e74c3c15; }
+        .coord-display { 
+            font-size: 24px; 
+            font-weight: bold; 
+            color: #00d4aa;
+            padding: 10px;
+            background: #0f3460;
+            border-radius: 8px;
+            display: inline-block;
+        }
+        img { max-width: 100%; border-radius: 8px; margin-top: 10px; }
+    </style>
+</head>
+<body>
+    <h1>🤖 Windsurf 自动化测试</h1>
+    <p class="subtitle">测试 IDE 自动化功能</p>
+
+    <!-- 状态检查 -->
+    <div class="card">
+        <h3>📡 连接状态</h3>
+        <div class="row">
+            <button class="btn-primary" onclick="checkHealth()">检查 Agent</button>
+            <button class="btn-secondary" onclick="getWindowInfo()">获取窗口信息</button>
+        </div>
+        <div id="healthStatus"></div>
+    </div>
+
+    <!-- 坐标设置 -->
+    <div class="card">
+        <h3>🎯 输入框坐标</h3>
+        
+        <!-- 延迟捕获 -->
+        <div class="row">
+            <button class="btn-primary" id="delayBtn" onclick="delayCapture(3)">⏱️ 3秒后捕获</button>
+            <button class="btn-secondary" onclick="delayCapture(5)">5秒后捕获</button>
+            <button class="btn-secondary" onclick="getMousePosition()">立即获取</button>
+            <span class="coord-display" id="mouseCoord">X: ?, Y: ?</span>
+        </div>
+        <div id="countdown" style="font-size:48px; color:#00d4aa; text-align:center; display:none;">3</div>
+        <p style="color:#888; font-size:12px; margin:5px 0;">点击后移动鼠标到输入框，倒计时结束自动捕获</p>
+        
+        <!-- 自动检测（推荐） -->
+        <div style="margin-top: 15px; padding: 15px; background: #1a4a1a; border-radius: 8px; border: 2px solid #00d4aa;">
+            <h4 style="margin:0 0 10px 0; color: #00d4aa;">🚀 自动检测（推荐）</h4>
+            <div class="row">
+                <button class="btn-primary" style="font-size:16px; padding:12px 24px;" onclick="autoDetect()">
+                    🔍 一键自动检测输入框位置
+                </button>
+            </div>
+            <div id="autoResult" style="margin-top:10px; font-family: monospace; font-size:13px;"></div>
+        </div>
+        
+        <!-- 手动调整 -->
+        <div style="margin-top: 15px; padding: 15px; background: #0f3460; border-radius: 8px;">
+            <h4 style="margin:0 0 10px 0; color: #888;">📐 手动调整比例</h4>
+            <div class="row">
+                <label style="width:150px;">距右边比例:</label>
+                <input type="number" id="ratioX" step="0.01" value="0.13" style="width:80px;">
+                <label style="width:100px;">距底部像素:</label>
+                <input type="number" id="offsetY" value="55" style="width:80px;">
+            </div>
+            <div class="row" style="margin-top:10px;">
+                <button class="btn-secondary" onclick="setInputRatio()">设置比例</button>
+                <button class="btn-secondary" onclick="calcInputPosition()">计算坐标</button>
+            </div>
+            <div id="calcResult" style="margin-top:10px; font-family: monospace; font-size:12px;"></div>
+        </div>
+        
+        <!-- 固定坐标 -->
+        <div style="margin-top: 15px;">
+            <h4 style="margin:0 0 10px 0; color: #888;">📍 固定坐标</h4>
+            <div class="row">
+                <input type="number" id="inputX" placeholder="X" value="851">
+                <input type="number" id="inputY" placeholder="Y" value="839">
+                <button class="btn-secondary" onclick="setInputPosition()">设置固定坐标</button>
+                <button class="btn-secondary" onclick="useCurrentMouse()">用当前鼠标</button>
+            </div>
+        </div>
+        <div id="posStatus"></div>
+    </div>
+
+    <!-- 发送消息 -->
+    <div class="card">
+        <h3>📤 发送消息</h3>
+        <textarea id="message" placeholder="输入要发送的消息...">hello from test page</textarea>
+        <div class="row">
+            <button class="btn-primary" onclick="sendMessage()">发送消息</button>
+            <button class="btn-secondary" onclick="sendWithCoord()">使用指定坐标发送</button>
+        </div>
+        <div id="sendStatus"></div>
+    </div>
+
+    <!-- 快捷操作 -->
+    <div class="card">
+        <h3>⚡ 快捷操作</h3>
+        <div class="row">
+            <button class="btn-secondary" onclick="hotkey('ctrl+s')">💾 保存</button>
+            <button class="btn-secondary" onclick="hotkey('f5')">▶️ 运行</button>
+            <button class="btn-secondary" onclick="hotkey('shift+f5')">⏹️ 停止</button>
+            <button class="btn-secondary" onclick="hotkey('ctrl+`')">💻 终端</button>
+            <button class="btn-secondary" onclick="hotkey('shift+alt+f')">✨ 格式化</button>
+            <button class="btn-secondary" onclick="hotkey('escape')">❌ Escape</button>
+        </div>
+        <div id="hotkeyStatus"></div>
+    </div>
+
+    <!-- 截图 -->
+    <div class="card">
+        <h3>📷 截图</h3>
+        <button class="btn-primary" onclick="captureScreen()">截图</button>
+        <div id="screenshotContainer"></div>
+    </div>
+
+    <!-- 日志 -->
+    <div class="card">
+        <h3>📋 日志</h3>
+        <button class="btn-danger" onclick="clearLog()">清空日志</button>
+        <div id="log"></div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:3001';
+        const DEVICE_ID = '27349e69-0ca3-4279-8b19-6541c70fe807';
+        let currentMouseX = 0, currentMouseY = 0;
+
+        function log(msg, type = 'info') {
+            const logEl = document.getElementById('log');
+            const entry = document.createElement('div');
+            entry.className = `log-entry log-${type}`;
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+            logEl.insertBefore(entry, logEl.firstChild);
+        }
+
+        function clearLog() {
+            document.getElementById('log').innerHTML = '';
+        }
+
+        function showStatus(id, msg, type) {
+            const el = document.getElementById(id);
+            el.innerHTML = `<div class="status ${type}">${msg}</div>`;
+        }
+
+        async function callAgent(plugin, action, params = {}) {
+            try {
+                const res = await fetch(`${API_BASE}/api/agents/${DEVICE_ID}/execute`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ plugin, action, params })
+                });
+                return await res.json();
+            } catch (e) {
+                return { success: false, error: e.message };
+            }
+        }
+
+        async function checkHealth() {
+            log('检查 Agent 状态...');
+            try {
+                const res = await fetch('http://localhost:5200/health');
+                const data = await res.json();
+                showStatus('healthStatus', `✅ Agent 在线 | 插件: ${data.plugins.join(', ')}`, 'success');
+                log('Agent 在线', 'success');
+            } catch (e) {
+                showStatus('healthStatus', '❌ Agent 离线', 'error');
+                log('Agent 离线: ' + e.message, 'error');
+            }
+        }
+
+        async function getMousePosition() {
+            log('获取鼠标位置...');
+            const result = await callAgent('windsurf', 'get-mouse-position');
+            if (result.success) {
+                currentMouseX = result.data.x;
+                currentMouseY = result.data.y;
+                document.getElementById('mouseCoord').textContent = `X: ${currentMouseX}, Y: ${currentMouseY}`;
+                log(`鼠标位置: (${currentMouseX}, ${currentMouseY})`, 'success');
+            } else {
+                log('获取失败: ' + result.error, 'error');
+            }
+        }
+
+        function useCurrentMouse() {
+            if (currentMouseX > 0) {
+                document.getElementById('inputX').value = currentMouseX;
+                document.getElementById('inputY').value = currentMouseY;
+                log(`已填入坐标: (${currentMouseX}, ${currentMouseY})`);
+            }
+        }
+
+        async function setInputPosition() {
+            const x = parseInt(document.getElementById('inputX').value);
+            const y = parseInt(document.getElementById('inputY').value);
+            log(`设置输入框坐标: (${x}, ${y})...`);
+            const result = await callAgent('windsurf', 'set-input-position', { x, y });
+            if (result.success) {
+                showStatus('posStatus', `✅ 坐标已设置: (${x}, ${y})`, 'success');
+                log('坐标设置成功', 'success');
+            } else {
+                showStatus('posStatus', '❌ 设置失败', 'error');
+                log('设置失败: ' + result.error, 'error');
+            }
+        }
+
+        async function sendMessage() {
+            const msg = document.getElementById('message').value;
+            log(`发送消息: ${msg}`);
+            const result = await callAgent('windsurf', 'send-message', { message: msg });
+            if (result.success) {
+                showStatus('sendStatus', `✅ 发送成功 (${result.data.timestamp})`, 'success');
+                log('发送成功', 'success');
+            } else {
+                showStatus('sendStatus', '❌ 发送失败: ' + result.error, 'error');
+                log('发送失败: ' + result.error, 'error');
+            }
+        }
+
+        async function sendWithCoord() {
+            const msg = document.getElementById('message').value;
+            const x = parseInt(document.getElementById('inputX').value);
+            const y = parseInt(document.getElementById('inputY').value);
+            log(`发送消息到 (${x}, ${y}): ${msg}`);
+            const result = await callAgent('windsurf', 'send-message', { message: msg, x, y });
+            if (result.success) {
+                showStatus('sendStatus', `✅ 发送成功 (${result.data.timestamp})`, 'success');
+                log('发送成功', 'success');
+            } else {
+                showStatus('sendStatus', '❌ 发送失败: ' + result.error, 'error');
+                log('发送失败: ' + result.error, 'error');
+            }
+        }
+
+        async function hotkey(keys) {
+            log(`执行快捷键: ${keys}`);
+            const result = await callAgent('windsurf', 'hotkey', { keys });
+            if (result.success) {
+                showStatus('hotkeyStatus', `✅ ${keys} 执行成功`, 'success');
+                log('快捷键执行成功', 'success');
+            } else {
+                showStatus('hotkeyStatus', '❌ 执行失败', 'error');
+                log('执行失败: ' + result.error, 'error');
+            }
+        }
+
+        async function getWindowInfo() {
+            log('获取窗口信息...');
+            const result = await callAgent('windsurf', 'get-window-info');
+            if (result.success) {
+                const d = result.data;
+                showStatus('healthStatus', 
+                    `📐 窗口: ${d.width}x${d.height} @ (${d.left}, ${d.top}) | 估计输入框: (${d.estimatedInputBox.x}, ${d.estimatedInputBox.y})`, 
+                    'info');
+                log(`窗口信息: ${d.width}x${d.height}`, 'success');
+            }
+        }
+
+        async function captureScreen() {
+            log('截图中...');
+            const result = await callAgent('window-control', 'capture-screen');
+            if (result.success) {
+                const img = document.createElement('img');
+                img.src = 'data:image/png;base64,' + result.data.image;
+                const container = document.getElementById('screenshotContainer');
+                container.innerHTML = '';
+                container.appendChild(img);
+                log('截图成功', 'success');
+            } else {
+                log('截图失败: ' + result.error, 'error');
+            }
+        }
+
+        // 延迟捕获鼠标
+        async function delayCapture(seconds) {
+            const countdownEl = document.getElementById('countdown');
+            countdownEl.style.display = 'block';
+            log(`${seconds}秒后捕获鼠标，请移动到输入框...`);
+            
+            // 倒计时
+            for (let i = seconds; i > 0; i--) {
+                countdownEl.textContent = i;
+                countdownEl.style.color = i <= 2 ? '#e74c3c' : '#00d4aa';
+                await new Promise(r => setTimeout(r, 1000));
+            }
+            
+            countdownEl.textContent = '📍';
+            
+            // 捕获
+            const result = await callAgent('windsurf', 'get-mouse-position');
+            if (result.success) {
+                currentMouseX = result.data.x;
+                currentMouseY = result.data.y;
+                document.getElementById('mouseCoord').textContent = `X: ${currentMouseX}, Y: ${currentMouseY}`;
+                document.getElementById('inputX').value = currentMouseX;
+                document.getElementById('inputY').value = currentMouseY;
+                log(`✅ 捕获成功: (${currentMouseX}, ${currentMouseY})`, 'success');
+                
+                // 自动计算比例
+                const winResult = await callAgent('windsurf', 'get-window-info');
+                if (winResult.success) {
+                    const w = winResult.data;
+                    const ratioX = (w.right - currentMouseX) / w.width;
+                    const offsetY = w.bottom - currentMouseY;
+                    document.getElementById('ratioX').value = ratioX.toFixed(3);
+                    document.getElementById('offsetY').value = offsetY;
+                    log(`📐 计算比例: ratioX=${ratioX.toFixed(3)}, offsetY=${offsetY}`);
+                }
+            } else {
+                log('捕获失败', 'error');
+            }
+            
+            setTimeout(() => { countdownEl.style.display = 'none'; }, 1000);
+        }
+
+        // 设置比例
+        async function setInputRatio() {
+            const ratioX = parseFloat(document.getElementById('ratioX').value);
+            const offsetY = parseInt(document.getElementById('offsetY').value);
+            log(`设置比例: ratioX=${ratioX}, offsetY=${offsetY}`);
+            
+            const result = await callAgent('windsurf', 'set-input-ratio', { ratioX, offsetY });
+            if (result.success) {
+                const calc = result.data.calculatedPosition;
+                if (calc) {
+                    document.getElementById('calcResult').innerHTML = 
+                        `✅ 计算结果: <strong>(${calc.x}, ${calc.y})</strong><br>` +
+                        `窗口: ${calc.window.width}x${calc.window.height} @ (${calc.window.left}, ${calc.window.top})`;
+                    log(`比例设置成功，计算坐标: (${calc.x}, ${calc.y})`, 'success');
+                }
+            } else {
+                log('设置失败: ' + result.error, 'error');
+            }
+        }
+
+        // 计算坐标
+        async function calcInputPosition() {
+            log('计算输入框位置...');
+            const result = await callAgent('windsurf', 'calc-input-position');
+            if (result.success) {
+                const d = result.data;
+                document.getElementById('calcResult').innerHTML = 
+                    `✅ 计算结果: <strong>(${d.x}, ${d.y})</strong><br>` +
+                    `窗口: ${d.window.width}x${d.window.height} @ (${d.window.left}, ${d.window.top})<br>` +
+                    `比例: ratioX=${d.ratio.ratioX}, offsetY=${d.ratio.offsetY}`;
+                document.getElementById('inputX').value = d.x;
+                document.getElementById('inputY').value = d.y;
+                log(`计算完成: (${d.x}, ${d.y})`, 'success');
+            } else {
+                log('计算失败: ' + result.error, 'error');
+            }
+        }
+
+        // 自动检测
+        async function autoDetect() {
+            log('🔍 自动检测输入框位置...');
+            const result = await callAgent('windsurf', 'auto-detect');
+            
+            if (result.success) {
+                const d = result.data;
+                const html = `
+                    <div style="color:#00d4aa;">✅ ${d.message}</div>
+                    <div style="margin-top:8px;">
+                        📺 屏幕: ${d.screen.width} x ${d.screen.height}<br>
+                        🪟 窗口: ${d.window.width} x ${d.window.height} 
+                        ${d.window.isFullScreen ? '<span style="color:#00d4aa;">(全屏)</span>' : ''}<br>
+                        📍 输入框: <strong style="color:#00d4aa; font-size:16px;">(${d.inputBox.x}, ${d.inputBox.y})</strong><br>
+                        📐 比例: ratioX=${d.inputBox.ratioX}, offsetY=${d.inputBox.offsetY}
+                    </div>
+                `;
+                document.getElementById('autoResult').innerHTML = html;
+                document.getElementById('inputX').value = d.inputBox.x;
+                document.getElementById('inputY').value = d.inputBox.y;
+                document.getElementById('ratioX').value = d.inputBox.ratioX;
+                document.getElementById('offsetY').value = d.inputBox.offsetY;
+                log(`✅ 自动检测成功: (${d.inputBox.x}, ${d.inputBox.y})`, 'success');
+            } else {
+                document.getElementById('autoResult').innerHTML = 
+                    `<div style="color:#e74c3c;">❌ 检测失败: ${result.error}</div>`;
+                log('检测失败: ' + result.error, 'error');
+            }
+        }
+
+        // 初始化
+        checkHealth();
+        autoDetect();  // 自动检测
+    </script>
+</body>
+</html>

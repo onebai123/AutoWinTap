@@ -751,21 +751,23 @@ export default function PresetsPage() {
                     >
                       <Row justify="space-between" align="middle" style={{ width: '100%' }}>
                         <Col>
-                          <Space>
+                          <Space size="small" style={{ flexWrap: 'nowrap' }}>
                             {selected && <CheckCircleOutlined style={{ color: '#1890ff' }} />}
+                            {win.isMinimized && <Tag color="orange">最小化</Tag>}
                             <Tag color={getProcessColor(win.processName)}>{win.processName}</Tag>
-                            <Text ellipsis style={{ maxWidth: 200 }}>{win.title}</Text>
-                            {win.isMinimized && <Tag>最小化</Tag>}
+                            <Text ellipsis style={{ maxWidth: 150, display: 'inline-block' }} title={win.title}>{win.title}</Text>
                           </Space>
                         </Col>
                         <Col>
-                          <Tooltip title="激活此窗口">
+                          <Tooltip title="激活此窗口（置顶）">
                             <Button 
-                              type="link" 
+                              type="primary" 
                               size="small" 
                               icon={<ExpandOutlined />}
                               onClick={(e) => activateSingleWindow(win.handle, e)}
-                            />
+                            >
+                              激活
+                            </Button>
                           </Tooltip>
                         </Col>
                       </Row>

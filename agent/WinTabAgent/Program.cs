@@ -190,6 +190,11 @@ class Program
     {
         Console.WriteLine($"正在连接 Server: {config.Server.Url}");
         
+        // 启动 HTTP 服务器
+        using var httpServer = new AgentHttpServer(pluginService, context, config.Agent.HttpPort);
+        httpServer.Start();
+        Console.WriteLine($"[OK] HTTP Server started at http://0.0.0.0:{config.Agent.HttpPort}");
+        
         using var connection = new ServerConnection(config, pluginService, context);
         
         try
@@ -198,16 +203,19 @@ class Program
             Console.WriteLine();
             Console.WriteLine("✓ 已连接到 Server");
             Console.WriteLine($"  Device ID: {connection.DeviceId}");
+            Console.WriteLine($"  HTTP API: http://localhost:{config.Agent.HttpPort}");
             Console.WriteLine();
             Console.WriteLine("按 Enter 断开连接...");
             Console.ReadLine();
             
+            httpServer.Stop();
             await connection.DisconnectAsync();
             Console.WriteLine("已断开连接");
         }
         catch (Exception ex)
         {
             Console.WriteLine($"[ERROR] 连接失败: {ex.Message}");
+            httpServer.Stop();
         }
     }
 

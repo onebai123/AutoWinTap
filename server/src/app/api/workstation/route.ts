@@ -11,6 +11,7 @@ interface DbWorkstation {
   id: string
   name: string
   deviceId: string
+  presetId: string | null
   windows: string
   commands: string
 }
@@ -45,6 +46,7 @@ export async function POST(request: NextRequest) {
       data: {
         name: body.name,
         deviceId: body.deviceId,
+        presetId: body.presetId || null,
         windows: JSON.stringify(body.windows || []),
         commands: JSON.stringify(body.commands || []),
       }

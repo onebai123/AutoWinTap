@@ -656,6 +656,22 @@ export default function ControlPanelPage() {
                 >
                   调试浏览器
                 </Button>
+                <Button
+                  icon={<CodeOutlined />}
+                  type="primary"
+                  ghost
+                  onClick={() => window.open('/windsurf-test.html', '_blank')}
+                >
+                  IDE 自动化测试
+                </Button>
+                <Link href={`/supervision/${deviceId}`}>
+                  <Button
+                    icon={<RobotOutlined />}
+                    type="primary"
+                  >
+                    🤖 AI 监管
+                  </Button>
+                </Link>
               </Space>
             </Card>
           </Col>

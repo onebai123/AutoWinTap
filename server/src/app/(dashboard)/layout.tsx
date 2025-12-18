@@ -48,6 +48,7 @@ const menuItems: MenuItem[] = [
       { key: '/tasks', label: '任务中心' },
       { key: '/monitor', label: '屏幕监控' },
       { key: '/browser', label: '浏览器调试' },
+      { key: '/ide', label: '🤖 IDE 控制' },
       { key: '/logs', label: '日志查看' },
       { key: '/plugins/installed', label: '插件管理' },
     ],
@@ -75,7 +76,7 @@ export default function DashboardLayout({
   const getOpenKeys = () => {
     if (pathname?.startsWith('/tasks') || pathname?.startsWith('/monitor') || 
         pathname?.startsWith('/logs') || pathname?.startsWith('/browser') ||
-        pathname?.startsWith('/plugins')) return ['more-group']
+        pathname?.startsWith('/ide') || pathname?.startsWith('/plugins')) return ['more-group']
     return []
   }
 
@@ -247,8 +248,17 @@ export default function DashboardLayout({
             </Text>
           </Space>
 
-          {/* 右侧：AI级别 + 模式切换 + 设置 + 快速开始 */}
-          <Space size="middle">
+          {/* 右侧：模式切换 + AI级别 + GitHub + 快速开始 */}
+          <Space size="small">
+            <Segmented
+              size="small"
+              options={[
+                { label: '🧑‍💻 个人提效', value: 'personal' },
+                { label: '📂 多项目并行', value: 'multi' },
+                { label: '🤖 群控', value: 'group', disabled: true },
+              ]}
+              defaultValue="personal"
+            />
             {/* AI 辅助级别选择器 */}
             <Dropdown
               menu={{
@@ -283,27 +293,10 @@ export default function DashboardLayout({
               </Button>
             </Dropdown>
             <Divider type="vertical" />
-            <Segmented
-              size="small"
-              options={[
-                { label: '🧑‍💻 个人提效', value: 'personal' },
-                { label: '📂 多项目并行', value: 'multi' },
-                { label: '🤖 群控', value: 'group', disabled: true },
-              ]}
-              defaultValue="personal"
-            />
-            <Divider type="vertical" />
-            <Tooltip title="设置">
-              <Button 
-                type="text" 
-                icon={<SettingOutlined />}
-                onClick={() => router.push('/settings')}
-              />
-            </Tooltip>
             <Tooltip title="GitHub">
               <Button 
                 type="text" 
-                icon={<GithubOutlined />}
+                icon={<GithubOutlined style={{ fontSize: 18 }} />}
                 href="https://github.com/onebai123/AutoWinTap"
                 target="_blank"
               />

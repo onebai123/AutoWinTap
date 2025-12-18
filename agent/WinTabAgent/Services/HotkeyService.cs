@@ -125,9 +125,11 @@ public class HotkeyService : IDisposable
 
     private async Task LoadPresetsAsync()
     {
+        var httpUrl = _serverUrl.Replace("ws://", "http://").Replace("wss://", "https://");
+        
         try
         {
-            var response = await _http.GetStringAsync($"{_serverUrl}/api/presets");
+            var response = await _http.GetStringAsync($"{httpUrl}/api/presets");
             var json = System.Text.Json.JsonDocument.Parse(response);
             
             if (json.RootElement.TryGetProperty("data", out var data))
@@ -135,7 +137,7 @@ public class HotkeyService : IDisposable
                 _presets.Clear();
                 foreach (var preset in data.EnumerateArray())
                 {
-                    var hotkey = preset.GetProperty("hotkey").GetString();
+                    var hotkey = preset.TryGetProperty("hotkey", out var hk) ? hk.GetString() : null;
                     if (string.IsNullOrEmpty(hotkey)) continue;
 
                     // 解析 Alt+1 格式
@@ -154,7 +156,7 @@ public class HotkeyService : IDisposable
                         };
                     }
                 }
-                _context.Log($"[Hotkey] 已加载 {_presets.Count} 个热键预设");
+                _context.Log($"[Hotkey] 已加载 {_presets.Count} 个窗口编排热键");
             }
         }
         catch (Exception ex)
@@ -172,25 +174,24 @@ public class HotkeyService : IDisposable
     {
         _context.Log($"[Hotkey] 检测到 Alt+{id}");
 
+        // 检查窗口编排热键
         if (_presets.TryGetValue(id, out var preset))
         {
-            _context.Log($"[Hotkey] 激活预设: {preset.Name}");
+            _context.Log($"[Hotkey] 激活窗口编排: {preset.Name}");
             
-            // 执行窗口切换
-            var handles = preset.Handles.Select(h => new IntPtr(h)).ToList();
             await _pluginService.ExecuteAsync("window-control", "switch-preset", 
                 System.Text.Json.JsonSerializer.SerializeToElement(new { handles = preset.Handles }));
+            return;
         }
-        else
+
+        // 没有配置该热键，刷新配置后重试
+        await LoadPresetsAsync();
+        
+        if (_presets.TryGetValue(id, out preset))
         {
-            // 没有配置该热键，刷新预设
-            await LoadPresetsAsync();
-            if (_presets.TryGetValue(id, out preset))
-            {
-                _context.Log($"[Hotkey] 激活预设: {preset.Name}");
-                await _pluginService.ExecuteAsync("window-control", "switch-preset",
-                    System.Text.Json.JsonSerializer.SerializeToElement(new { handles = preset.Handles }));
-            }
+            _context.Log($"[Hotkey] 激活窗口编排: {preset.Name}");
+            await _pluginService.ExecuteAsync("window-control", "switch-preset",
+                System.Text.Json.JsonSerializer.SerializeToElement(new { handles = preset.Handles }));
         }
     }
 

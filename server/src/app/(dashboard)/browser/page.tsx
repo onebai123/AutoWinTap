@@ -28,11 +28,13 @@ interface ConsoleMessage {
 
 interface NetworkRequest {
   id: string
+  requestId?: string
   method: string
   url: string
   status: number
   type: string
   time: number
+  requestBody?: string
 }
 
 interface DomChange {
@@ -86,6 +88,8 @@ export default function BrowserDebugPage() {
   const [overflowElements, setOverflowElements] = useState<Array<{ tag: string; id: string; className: string; rect: { x: number; y: number; width: number; height: number }; scrollWidth: number; scrollHeight: number; clientWidth: number; clientHeight: number }>>([])
   const [pageScreenshot, setPageScreenshot] = useState<string | null>(null)
   const [screenshotModal, setScreenshotModal] = useState(false)
+  const [responseBody, setResponseBody] = useState<string | null>(null)
+  const [loadingBody, setLoadingBody] = useState(false)
 
   // 统计计算
   const errorCount = consoleLogs.filter(l => l.type === 'error').length
@@ -236,7 +240,18 @@ export default function BrowserDebugPage() {
       })
       const data = await res.json()
       if (data.success && Array.isArray(data.data)) {
-        setNetworkRequests(data.data)
+        // 映射字段名 (Agent 返回 PascalCase)
+        const mapped = data.data.map((r: Record<string, unknown>) => ({
+          id: r.RequestId || r.requestId || '',
+          requestId: r.RequestId || r.requestId || '',
+          method: r.Method || r.method || '',
+          url: r.Url || r.url || '',
+          status: r.StatusCode || r.status || 0,
+          type: r.Type || r.type || '',
+          time: r.Duration || r.time || 0,
+          requestBody: r.RequestBody || r.requestBody || null,
+        }))
+        setNetworkRequests(mapped)
       }
     } catch {}
   }
@@ -386,6 +401,35 @@ export default function BrowserDebugPage() {
     }
   }
 
+  // 获取响应 Body
+  const loadResponseBody = async (requestId: string) => {
+    if (!connectedPage || !requestId) return
+    setLoadingBody(true)
+    setResponseBody(null)
+    try {
+      const res = await fetch(`/api/agents/${selectedDevice}/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ plugin: 'browser-debug', action: 'get-response-body', params: { pageId: connectedPage, requestId } }),
+      })
+      const data = await res.json()
+      if (data.success && data.data?.body) {
+        // 尝试格式化 JSON
+        try {
+          const parsed = JSON.parse(data.data.body)
+          setResponseBody(JSON.stringify(parsed, null, 2))
+        } catch {
+          setResponseBody(data.data.body)
+        }
+      } else {
+        setResponseBody(data.error || '无法获取响应内容')
+      }
+    } catch {
+      setResponseBody('获取响应失败')
+    }
+    setLoadingBody(false)
+  }
+
   // 截取页面
   const capturePage = async () => {
     if (!connectedPage) return
@@ -421,7 +465,7 @@ export default function BrowserDebugPage() {
   const filteredNetwork = networkRequests
     .filter(req => {
       if (showOnlyFailed && req.status < 400) return false
-      if (showOnlyApi && req.type !== 'xhr' && req.type !== 'fetch') return false
+      if (showOnlyApi && !['xhr', 'fetch', 'XHR', 'Fetch'].includes(req.type)) return false
       if (networkFilter !== 'all' && req.type !== networkFilter) return false
       return true
     })
@@ -429,7 +473,7 @@ export default function BrowserDebugPage() {
       // 优先级：POST > XHR/Fetch > 其他
       const getPriority = (req: NetworkRequest) => {
         if (req.method === 'POST') return 0
-        if (req.type === 'xhr' || req.type === 'fetch') return 1
+        if (['xhr', 'fetch', 'XHR', 'Fetch'].includes(req.type)) return 1
         if (req.type === 'document') return 5
         if (req.type === 'script') return 6
         if (req.type === 'stylesheet') return 7
@@ -808,8 +852,8 @@ export default function BrowserDebugPage() {
                       {domChanges.length === 0 ? (
                         <Text type="secondary">暂无 DOM 变化</Text>
                       ) : (
-                        domChanges.slice().reverse().map((change, i) => (
-                          <div key={i} style={{ fontFamily: 'monospace', fontSize: 12, marginBottom: 4, color: '#abb2bf' }}>
+                        domChanges.slice().reverse().map((change) => (
+                          <div key={`${change.time}-${change.target}-${change.type}`} style={{ fontFamily: 'monospace', fontSize: 12, marginBottom: 4, color: '#abb2bf' }}>
                             <Tag color={change.type === 'childList' ? 'blue' : change.type === 'attributes' ? 'orange' : 'green'}>
                               {change.type}
                             </Tag>
@@ -849,7 +893,7 @@ export default function BrowserDebugPage() {
                           <Table
                             size="small"
                             dataSource={elements}
-                            rowKey={(r, i) => `${r.tag}-${i}`}
+                            rowKey={(r) => `${r.tag}-${r.id || r.className || ''}-${r.rect?.x}-${r.rect?.y}`}
                             pagination={false}
                             columns={[
                               { title: '元素', dataIndex: 'tag', width: 80, render: (tag: string, r: ElementInfo) => (
@@ -924,7 +968,7 @@ export default function BrowserDebugPage() {
       <Modal
         title="请求详情"
         open={!!detailModal}
-        onCancel={() => setDetailModal(null)}
+        onCancel={() => { setDetailModal(null); setResponseBody(null) }}
         footer={[
           <Button key="copy" icon={<CopyOutlined />} onClick={() => {
             if (detailModal) {
@@ -932,21 +976,66 @@ export default function BrowserDebugPage() {
               message.success('cURL 命令已复制')
             }
           }}>复制 cURL</Button>,
-          <Button key="close" onClick={() => setDetailModal(null)}>关闭</Button>
+          <Button key="close" onClick={() => { setDetailModal(null); setResponseBody(null) }}>关闭</Button>
         ]}
-        width={700}
+        width={800}
       >
         {detailModal && (
           <div>
             <Divider orientation="left">基本信息</Divider>
-            <p><Text strong>URL:</Text> <Text copyable>{detailModal.url}</Text></p>
-            <p><Text strong>方法:</Text> <Tag>{detailModal.method}</Tag></p>
-            <p><Text strong>状态:</Text> <Tag color={detailModal.status >= 400 ? 'red' : detailModal.status >= 200 ? 'green' : 'default'}>{detailModal.status}</Tag></p>
-            <p><Text strong>类型:</Text> <Tag>{detailModal.type}</Tag></p>
-            <p><Text strong>耗时:</Text> {detailModal.time}ms</p>
+            <Row gutter={16}>
+              <Col span={12}>
+                <p><Text strong>方法:</Text> <Tag>{detailModal.method}</Tag></p>
+                <p><Text strong>状态:</Text> <Tag color={detailModal.status >= 400 ? 'red' : detailModal.status >= 200 ? 'green' : 'default'}>{detailModal.status}</Tag></p>
+              </Col>
+              <Col span={12}>
+                <p><Text strong>类型:</Text> <Tag>{detailModal.type}</Tag></p>
+                <p><Text strong>耗时:</Text> {detailModal.time}ms</p>
+              </Col>
+            </Row>
+            <p><Text strong>URL:</Text> <Text copyable style={{ wordBreak: 'break-all' }}>{detailModal.url}</Text></p>
+            
+            <Divider orientation="left">
+              请求 / 响应对照
+              {!responseBody && !loadingBody && detailModal.requestId && (
+                <Button size="small" style={{ marginLeft: 8 }} onClick={() => loadResponseBody(detailModal.requestId!)}>
+                  加载响应
+                </Button>
+              )}
+            </Divider>
+            <Row gutter={12}>
+              <Col span={12}>
+                <Card size="small" title="📤 Request Body" style={{ height: '100%' }}>
+                  {detailModal.requestBody ? (
+                    <pre style={{ background: '#f6f8fa', padding: 8, borderRadius: 4, maxHeight: 250, overflow: 'auto', fontSize: 11, margin: 0 }}>
+                      {(() => {
+                        try { return JSON.stringify(JSON.parse(detailModal.requestBody), null, 2) } 
+                        catch { return detailModal.requestBody }
+                      })()}
+                    </pre>
+                  ) : (
+                    <Text type="secondary">无请求参数</Text>
+                  )}
+                </Card>
+              </Col>
+              <Col span={12}>
+                <Card size="small" title="📥 Response Body" style={{ height: '100%' }}>
+                  {loadingBody ? (
+                    <div style={{ textAlign: 'center', padding: 20 }}><Text type="secondary">加载中...</Text></div>
+                  ) : responseBody ? (
+                    <pre style={{ background: '#f6f8fa', padding: 8, borderRadius: 4, maxHeight: 250, overflow: 'auto', fontSize: 11, margin: 0 }}>
+                      {responseBody}
+                    </pre>
+                  ) : (
+                    <Text type="secondary">点击上方"加载响应"</Text>
+                  )}
+                </Card>
+              </Col>
+            </Row>
+
             <Divider orientation="left">cURL 命令</Divider>
-            <pre style={{ background: '#f5f5f5', padding: 12, borderRadius: 4, overflow: 'auto' }}>
-              {`curl -X ${detailModal.method} '${detailModal.url}'`}
+            <pre style={{ background: '#1e1e1e', color: '#d4d4d4', padding: 12, borderRadius: 4, overflow: 'auto', fontSize: 12 }}>
+              {`curl -X ${detailModal.method} '${detailModal.url}'${detailModal.requestBody ? ` \\\n  -H 'Content-Type: application/json' \\\n  -d '${detailModal.requestBody}'` : ''}`}
             </pre>
           </div>
         )}
@@ -1036,7 +1125,7 @@ export default function BrowserDebugPage() {
         <Table
           size="small"
           dataSource={overflowElements}
-          rowKey={(r, i) => `${r.tag}-${i}`}
+          rowKey={(r) => `${r.tag}-${r.id || r.className || ''}-${r.rect?.x}-${r.rect?.y}`}
           pagination={false}
           columns={[
             { title: '元素', dataIndex: 'tag', width: 100, render: (tag: string, r) => (
