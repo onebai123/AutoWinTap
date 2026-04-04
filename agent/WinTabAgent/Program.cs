@@ -5,6 +5,7 @@ using WinTabAgent.Plugins.WindowControl;
 using WinTabAgent.Plugins.BrowserDebug;
 using WinTabAgent.Plugins.Windsurf;
 using WinTabAgent.Plugins.Shell;
+using WinTabAgent.Plugins.Workflow;
 
 namespace WinTabAgent;
 
@@ -33,11 +34,15 @@ class Program
         // 创建插件服务
         var pluginService = new PluginService(context);
 
+        // 注入回调给上下文
+        context.ExecutePluginAction = pluginService.ExecuteAsync;
+
         // 注册内置插件
         await pluginService.RegisterBuiltinPluginAsync(new WindowControlPlugin());
         await pluginService.RegisterBuiltinPluginAsync(new BrowserDebugPlugin());
         await pluginService.RegisterBuiltinPluginAsync(new WindsurfPlugin());
         await pluginService.RegisterBuiltinPluginAsync(new ShellPlugin());
+        await pluginService.RegisterBuiltinPluginAsync(new WorkflowPlugin());
 
         // 加载外部插件
         await pluginService.LoadPluginsAsync();

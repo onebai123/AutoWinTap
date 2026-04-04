@@ -94,15 +94,27 @@ public class WindowControlPlugin : IWindowPlugin
     [StructLayout(LayoutKind.Sequential)]
     private struct INPUT
     {
-        public int type;
+        public uint type;
         public INPUTUNION u;
-        public KEYBDINPUT ki { get => u.ki; set => u.ki = value; }
     }
 
     [StructLayout(LayoutKind.Explicit)]
     private struct INPUTUNION
     {
+        [FieldOffset(0)] public MOUSEINPUT mi;
         [FieldOffset(0)] public KEYBDINPUT ki;
+        [FieldOffset(0)] public HARDWAREINPUT hi;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MOUSEINPUT
+    {
+        public int dx;
+        public int dy;
+        public uint mouseData;
+        public uint dwFlags;
+        public uint time;
+        public IntPtr dwExtraInfo;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -113,6 +125,14 @@ public class WindowControlPlugin : IWindowPlugin
         public uint dwFlags;
         public uint time;
         public IntPtr dwExtraInfo;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct HARDWAREINPUT
+    {
+        public uint uMsg;
+        public ushort wParamL;
+        public ushort wParamH;
     }
     private const int SM_CYSCREEN = 1;
 
@@ -163,13 +183,14 @@ public class WindowControlPlugin : IWindowPlugin
             "kill-by-port" => ExecuteKillByPort(parameters),
             "open-url" => ExecuteOpenUrl(parameters),
             "activate-by-pattern" => await ExecuteActivateByPatternAsync(parameters),
+            "find" => await ExecuteFindAsync(parameters),
             _ => PluginResult.Fail($"Unknown action: {action}")
         };
     }
 
     public IEnumerable<string> GetSupportedActions()
     {
-        return new[] { "list", "list-processes", "activate", "minimize", "maximize", "capture", "capture-screen", "send-keys", "mouse-click", "switch-preset", "switch-desktop", "minimize-all", "restore-all", "tile-windows", "ocr", "ocr-screen", "list-ports", "kill-by-port", "open-url", "activate-by-pattern" };
+        return new[] { "list", "list-processes", "activate", "minimize", "maximize", "capture", "capture-screen", "send-keys", "mouse-click", "switch-preset", "switch-desktop", "minimize-all", "restore-all", "tile-windows", "ocr", "ocr-screen", "list-ports", "kill-by-port", "open-url", "activate-by-pattern", "find" };
     }
 
     #endregion
@@ -434,6 +455,9 @@ public class WindowControlPlugin : IWindowPlugin
         return processes;
     }
 
+    private const uint KEYEVENTF_UNICODE = 0x0004;
+    private const uint KEYEVENTF_KEYUP = 0x0002;
+
     private PluginResult ExecuteSendKeys(JsonElement parameters)
     {
         if (!parameters.TryGetProperty("keys", out var keysProp))
@@ -449,12 +473,53 @@ public class WindowControlPlugin : IWindowPlugin
 
         try
         {
-            System.Windows.Forms.SendKeys.SendWait(keys);
+            // 检查是否包含特殊键序列（如 {Enter}, {Tab}, {Ctrl+C} 等）
+            if (keys.Contains('{') && keys.Contains('}'))
+            {
+                // 包含特殊键，使用 SendKeys.SendWait
+                System.Windows.Forms.SendKeys.SendWait(keys);
+            }
+            else
+            {
+                // 纯文本输入，使用 SendInput + KEYEVENTF_UNICODE 支持中文
+                SendUnicodeText(keys);
+            }
             return PluginResult.Ok(new { sent = keys });
         }
         catch (Exception ex)
         {
             return PluginResult.Fail($"SendKeys failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// 使用 SendInput + KEYEVENTF_UNICODE 发送 Unicode 文本（支持中文）
+    /// </summary>
+    private void SendUnicodeText(string text)
+    {
+        var inputs = new List<INPUT>();
+
+        foreach (var c in text)
+        {
+            // Key down
+            var down = new INPUT { type = 1 };
+            down.u.ki.wVk = 0;
+            down.u.ki.wScan = (ushort)c;
+            down.u.ki.dwFlags = KEYEVENTF_UNICODE;
+            inputs.Add(down);
+
+            // Key up
+            var up = new INPUT { type = 1 };
+            up.u.ki.wVk = 0;
+            up.u.ki.wScan = (ushort)c;
+            up.u.ki.dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP;
+            inputs.Add(up);
+        }
+
+        if (inputs.Count > 0)
+        {
+            var inputArray = inputs.ToArray();
+            SendInput((uint)inputArray.Length, inputArray, Marshal.SizeOf<INPUT>());
         }
     }
 
@@ -784,6 +849,43 @@ public class WindowControlPlugin : IWindowPlugin
         _context?.Log($"[activate-by-pattern] Matched: {matched.Count}, Failed: {failed.Count}");
         
         return PluginResult.Ok(new { matched, failed });
+    }
+
+    private async Task<PluginResult> ExecuteFindAsync(JsonElement parameters)
+    {
+        var processName = parameters.TryGetProperty("processNamePattern", out var p1) ? p1.GetString() : null;
+        var titlePattern = parameters.TryGetProperty("titlePattern", out var p2) ? p2.GetString() : null;
+
+        var windows = await GetWindowsAsync();
+        WindowInfo? matched = null;
+
+        foreach (var w in windows)
+        {
+            // 排除系统窗口
+            if (w.Title != null && w.Title.Contains("Program Manager")) continue;
+
+            bool pMatch = string.IsNullOrEmpty(processName) || 
+                          (w.ProcessName != null && w.ProcessName.Contains(processName, StringComparison.OrdinalIgnoreCase));
+            bool tMatch = string.IsNullOrEmpty(titlePattern) || 
+                          (w.Title != null && w.Title.Contains(titlePattern, StringComparison.OrdinalIgnoreCase));
+
+            if (pMatch && tMatch)
+            {
+                matched = w;
+                break;
+            }
+        }
+
+        if (matched != null)
+        {
+            return PluginResult.Ok(new { 
+                handle = matched.Handle.ToInt64(), 
+                title = matched.Title, 
+                processName = matched.ProcessName 
+            });
+        }
+        
+        return PluginResult.Fail("Window not found");
     }
 
     /// <summary>

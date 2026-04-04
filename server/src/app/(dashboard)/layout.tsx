@@ -49,6 +49,7 @@ const menuItems: MenuItem[] = [
       { key: '/monitor', label: '屏幕监控' },
       { key: '/browser', label: '浏览器调试' },
       { key: '/ide', label: '🤖 IDE 控制' },
+      { key: '/workflow', label: '工作流自动化' },
       { key: '/logs', label: '日志查看' },
       { key: '/plugins/installed', label: '插件管理' },
     ],

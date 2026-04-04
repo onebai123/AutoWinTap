@@ -12,6 +12,8 @@ public class DefaultPluginContext : IPluginContext
     private readonly AgentConfig _config;
     private readonly Dictionary<string, List<Action<object>>> _eventHandlers = new();
 
+    public Func<string, string, JsonElement, Task<PluginResult>>? ExecutePluginAction { get; set; }
+
     public DefaultPluginContext(AgentConfig config)
     {
         _config = config;
@@ -87,5 +89,14 @@ public class DefaultPluginContext : IPluginContext
             _eventHandlers[eventName] = new List<Action<object>>();
         }
         _eventHandlers[eventName].Add(handler);
+    }
+
+    public Task<PluginResult> ExecutePluginAsync(string pluginId, string action, JsonElement parameters)
+    {
+        if (ExecutePluginAction != null)
+        {
+            return ExecutePluginAction(pluginId, action, parameters);
+        }
+        return Task.FromResult(PluginResult.Fail("ExecutePluginAction is not configured in current context."));
     }
 }

@@ -94,6 +94,11 @@ public interface IPluginContext
     /// 订阅事件
     /// </summary>
     void SubscribeEvent(string eventName, Action<object> handler);
+
+    /// <summary>
+    /// 调用其他插件执行动作
+    /// </summary>
+    Task<PluginResult> ExecutePluginAsync(string pluginId, string action, JsonElement parameters);
 }
 
 /// <summary>

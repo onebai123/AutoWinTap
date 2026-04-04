@@ -361,6 +361,46 @@ export default function MonitorPage() {
                     showIcon 
                   />
                 )}
+
+                {/* 智能干预控制钮 */}
+                <div style={{ marginTop: 24, textAlign: 'right', borderTop: '1px solid #f0f0f0', paddingTop: 16 }}>
+                  <Text type="secondary" style={{ marginRight: 16 }}>结合 AI 分析结论，您可以一键调度 Agent：</Text>
+                  <Button 
+                    type="primary" 
+                    icon={<RobotOutlined />} 
+                    onClick={async () => {
+                      message.loading({ content: '正在调度 Workflow...', key: 'dispatch' });
+                      try {
+                        const res = await fetch(`/api/agents/${selectedDevice}/execute`, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({
+                            plugin: 'workflow',
+                            action: 'run',
+                            params: {
+                              steps: [
+                                { id: 'f', action: 'window-control.find', params: { processNamePattern: 'Antigravity' } },
+                                { id: 'a', action: 'window-control.activate', params: { handle: '${f.handle}' } },
+                                { id: 'd', action: 'system.delay', params: { ms: 300 } },
+                                { id: 's', action: 'window-control.send-keys', params: { keys: '监控发现你处于空闲/刚完成状态，请继续执行下一个功能模块。{Enter}' } }
+                              ]
+                            }
+                          })
+                        });
+                        const data = await res.json();
+                        if (data.success) {
+                          message.success({ content: '自动干预指令已送达！', key: 'dispatch' });
+                        } else {
+                          message.error({ content: '下发失败: ' + data.error, key: 'dispatch' });
+                        }
+                      } catch (err) {
+                        message.error({ content: '请求失败', key: 'dispatch' });
+                      }
+                    }}
+                  >
+                    ⚡ 一键让 Antigravity 继续干活
+                  </Button>
+                </div>
               </div>
             ) : (
               <Empty description="先执行 OCR，然后点击「AI 分析」" />
