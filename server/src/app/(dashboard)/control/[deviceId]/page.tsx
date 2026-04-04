@@ -20,6 +20,7 @@ import {
   Typography,
   Select,
   Radio,
+  Checkbox,
 } from 'antd'
 import {
   ArrowLeftOutlined,
@@ -134,6 +135,8 @@ export default function ControlPanelPage() {
   const [shellCwd, setShellCwd] = useState('')
   const [shellOutput, setShellOutput] = useState('')
   const [shellLoading, setShellLoading] = useState(false)
+  const [autoEnter, setAutoEnter] = useState(true)
+  const [ideMode, setIdeMode] = useState(true)
 
   const addLog = useCallback((level: LogEntry['level'], msg: string) => {
     const time = new Date().toLocaleTimeString('zh-CN')
@@ -160,18 +163,33 @@ export default function ControlPanelPage() {
   const fetchScreen = useCallback(async () => {
     if (!device || device.status !== 'ONLINE') return
     setScreenLoading(true)
+
     try {
-      const res = await fetch(`/api/screen/${deviceId}`)
-      const data = await res.json()
-      if (data.success && data.data) {
-        setScreenData(data.data)
+      // 检查是否启用了窗口隔离模式
+      if (captureMode === 'window' && selectedWindow) {
+        const res = await fetch(`/api/agents/${deviceId}/execute`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ plugin: 'window-control', action: 'capture', params: { handle: selectedWindow } }),
+        })
+        const data = await res.json()
+        if (data.success && data.data?.image) {
+          setScreenData(data.data.image)
+        }
+      } else {
+        // 走常规的全屏画面流
+        const res = await fetch(`/api/screen/${deviceId}`)
+        const data = await res.json()
+        if (data.success && data.data) {
+          setScreenData(data.data)
+        }
       }
     } catch {
       // ignore
     } finally {
       setScreenLoading(false)
     }
-  }, [deviceId, device])
+  }, [deviceId, device, captureMode, selectedWindow])
 
   useEffect(() => {
     fetchDevice()
@@ -358,9 +376,34 @@ export default function ControlPanelPage() {
   // 发送命令
   const sendCommand = async () => {
     if (!commandInput.trim() || !device || device.status !== 'ONLINE') return
-    addLog('info', `发送命令: ${commandInput}`)
+    
+    const isWindowTarget = captureMode === 'window' && selectedWindow
+    const targetName = isWindowTarget ? (windowList.find(w => w.handle === selectedWindow)?.title || '选定窗口') : '当前活动窗口'
+    
+    const keysToSend = autoEnter && !commandInput.includes('{Enter}') ? `${commandInput}{Enter}` : commandInput;
+    addLog('info', `发送命令到 ${targetName}: ${keysToSend}`)
+    
     try {
-      await executeAction('window-control', 'send-keys', { keys: commandInput })
+      if (isWindowTarget) {
+        // 使用 workflow 插件实现复合动作
+        const steps: any[] = [
+          { id: 'act', action: 'window-control.activate', params: { handle: selectedWindow } },
+          { id: 'delay1', action: 'system.delay', params: { ms: 200 } }
+        ];
+
+        // 如果开启了 IDE 模式，先发送 Ctrl+L 唤起/聚焦对话框
+        if (ideMode) {
+          steps.push({ id: 'focus_ide', action: 'window-control.send-keys', params: { keys: '^l' } });
+          steps.push({ id: 'delay2', action: 'system.delay', params: { ms: 200 } });
+        }
+
+        steps.push({ id: 'send', action: 'window-control.send-keys', params: { keys: keysToSend } });
+
+        await executeAction('workflow', 'run', { steps });
+      } else {
+        // 普通全局发送
+        await executeAction('window-control', 'send-keys', { keys: keysToSend })
+      }
       setCommandInput('')
     } catch {
       addLog('error', '命令发送失败')
@@ -553,6 +596,23 @@ export default function ControlPanelPage() {
                 </Button>
               </Space.Compact>
               <Text type="secondary" style={{ fontSize: 12, marginTop: 4, display: 'block' }}>
+                {captureMode === 'window' && selectedWindow ? (
+                  <Text type="success">✓ 将发送到选定窗口: {windowList.find(w => w.handle === selectedWindow)?.processName}</Text>
+                ) : (
+                  "将发送到 Agent 侧当前的活动窗口"
+                )}
+                <br />
+                <Checkbox checked={autoEnter} onChange={(e: any) => setAutoEnter(e.target.checked)}>
+                  自动在末尾附加回车 (Enter) 键
+                </Checkbox>
+                <Checkbox 
+                  checked={ideMode} 
+                  onChange={(e: any) => setIdeMode(e.target.checked)}
+                  style={{ marginLeft: 16 }}
+                >
+                  IDE 模式 (自动发送 Ctrl+L 聚焦对话框)
+                </Checkbox>
+                <br />
                 支持: 普通文字、{'{Enter}'}{'{Tab}'}{'{Ctrl+C}'} 等快捷键
               </Text>
             </Card>

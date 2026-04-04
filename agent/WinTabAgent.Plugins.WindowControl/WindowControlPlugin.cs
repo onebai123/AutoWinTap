@@ -299,9 +299,9 @@ public class WindowControlPlugin : IWindowPlugin
         return Task.CompletedTask;
     }
 
-    public Task<byte[]> CaptureWindowAsync(IntPtr handle)
+    public async Task<byte[]> CaptureWindowAsync(IntPtr handle)
     {
-        // 使用 DWM 获取更准确的窗口边界
+        // 确保使用 GetWindowRect 进行准确获取
         RECT rect;
         if (DwmGetWindowAttribute(handle, DWMWA_EXTENDED_FRAME_BOUNDS, out rect, Marshal.SizeOf<RECT>()) != 0)
         {
@@ -313,27 +313,42 @@ public class WindowControlPlugin : IWindowPlugin
 
         if (width <= 0 || height <= 0)
         {
-            return Task.FromResult(Array.Empty<byte>());
+            return Array.Empty<byte>();
         }
 
-        // 使用 PrintWindow API 截取窗口内容（即使被遮挡也能正确截图）
         using var bmp = new Bitmap(width, height);
         using var g = Graphics.FromImage(bmp);
-        var hdc = g.GetHdc();
         
+        bool printSuccess = false;
+        
+        var hdc = g.GetHdc();
         try
         {
-            // PW_RENDERFULLCONTENT 用于支持 DWM 渲染的窗口
-            if (!PrintWindow(handle, hdc, PW_RENDERFULLCONTENT))
+            // 标志 0x00000002 即 PW_RENDERFULLCONTENT 
+            printSuccess = PrintWindow(handle, hdc, PW_RENDERFULLCONTENT);
+            
+            // 如果带 PW_RENDERFULLCONTENT 失败，尝试以 PW_CLIENTONLY (1) 或基础标志 (0) 截取
+            if (!printSuccess)
             {
-                // 如果 PrintWindow 失败，回退到屏幕截图
-                g.ReleaseHdc(hdc);
-                g.CopyFromScreen(rect.Left, rect.Top, 0, 0, new Size(width, height));
+                printSuccess = PrintWindow(handle, hdc, 0);
             }
         }
         finally
         {
-            try { g.ReleaseHdc(hdc); } catch { }
+            g.ReleaseHdc(hdc);
+        }
+
+        // 强硬回退策略：如果所有 PrintWindow 拒绝绘制，则激活它到顶层再做 CopyFromScreen
+        if (!printSuccess)
+        {
+            // 必须把窗口拉到桌面最上层才能截，否则会被其它窗口（如浏览器）遮挡
+            SetForegroundWindow(handle);
+            ShowWindow(handle, SW_RESTORE);
+            await Task.Delay(150); // 给它点时间画出界面
+            
+            // 再次更新它的位置坐标
+            GetWindowRect(handle, out rect);
+            g.CopyFromScreen(rect.Left, rect.Top, 0, 0, new Size(rect.Right - rect.Left, rect.Bottom - rect.Top));
         }
 
         using var ms = new MemoryStream();
@@ -341,7 +356,7 @@ public class WindowControlPlugin : IWindowPlugin
         var encoderParams = new EncoderParameters(1);
         encoderParams.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, 80L);
         bmp.Save(ms, encoder, encoderParams);
-        return Task.FromResult(ms.ToArray());
+        return ms.ToArray();
     }
 
     public async Task SwitchPresetAsync(List<IntPtr> handles)
@@ -473,10 +488,11 @@ public class WindowControlPlugin : IWindowPlugin
 
         try
         {
-            // 检查是否包含特殊键序列（如 {Enter}, {Tab}, {Ctrl+C} 等）
-            if (keys.Contains('{') && keys.Contains('}'))
+            // 检查是否包含特殊键序列（如 {Enter}, {Tab}, {Ctrl+L} 或 ^l, +s, %f 等）
+            if ((keys.Contains('{') && keys.Contains('}')) || 
+                keys.Contains('^') || keys.Contains('+') || keys.Contains('%'))
             {
-                // 包含特殊键，使用 SendKeys.SendWait
+                // 包含特殊键或修饰符，使用 SendKeys.SendWait
                 System.Windows.Forms.SendKeys.SendWait(keys);
             }
             else
